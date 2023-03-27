@@ -2,7 +2,6 @@ import ast
 import functools
 import importlib
 import inspect
-import itertools
 import os
 import pkgutil
 import random
@@ -14,210 +13,163 @@ from pprint import pformat, pprint
 import sys
 from collections import OrderedDict
 
+# from allauth.account.forms import PasswordField, SetPasswordField
 from django import urls
 from django.apps import apps
-from django.conf import settings
+from django.contrib.auth.models import User
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
-from django.contrib.gis.db import models as gis_models
-from django.contrib.gis import forms as gis_forms
-from django.contrib.gis.geos import Point, MultiPoint
+
+try:
+    from django.contrib.gis import forms as gis_forms
+    from django.contrib.gis.db import models as gis_models
+    from django.contrib.gis.geos import Point
+except:
+    pass
 from django.contrib.messages.storage.fallback import FallbackStorage
-from django.contrib.postgres import fields as postgres_fields
-from django.contrib.postgres import forms as postgres_forms
+from django.contrib.postgres.fields import DateTimeRangeField, DateRangeField, JSONField
+from django.contrib.postgres import forms as postgress_forms
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.validators import MinValueValidator, MaxValueValidator
-from django.db import transaction, IntegrityError
+from django.db import transaction
 from django.db.models import NOT_PROVIDED, BooleanField, TextField, CharField, SlugField, EmailField, DateTimeField, \
     DateField, FileField, PositiveSmallIntegerField, DecimalField, IntegerField, QuerySet, PositiveIntegerField, \
-    SmallIntegerField, BigIntegerField, FloatField, ImageField, GenericIPAddressField, JSONField, URLField
+    SmallIntegerField, BigIntegerField, FloatField, ImageField, GenericIPAddressField
 from django.db.models.fields.related import RelatedField, ManyToManyField, ForeignKey, OneToOneField
 from django_filters import fields as django_filter_fields, FilterSet
 from django.forms import fields as django_form_fields
 from django.forms import models as django_form_models
 from django.http import QueryDict
-from django.test import RequestFactory
+from django.test import TestCase, RequestFactory
 from django.urls import reverse
 from django.utils.timezone import now
-from django.utils.translation import ugettext_lazy
 from django.views.generic import CreateView, UpdateView, DeleteView
-
-# TODO: refactor: apps below are optional
-from internationalflavor import iban as if_iban
-from internationalflavor import vat_number as if_vat
-from internationalflavor import countries as if_countries
-from pragmatic import fields as pragmatic_fields
-
-if 'gm2m' in getattr(settings, 'INSTALLED_APPS'):
-    from gm2m import GM2MField
-    RELATED_FIELDS = (RelatedField, GM2MField)
-else:
-    RELATED_FIELDS = (RelatedField)
+# import django_countries.fields as django_countries_fields
+# from django_iban.fields import IBANField, IBANFormField, SWIFTBICField
+from internationalflavor.countries import CountryField, CountryFormField
+from internationalflavor.countries.data import UN_RECOGNIZED_COUNTRIES
+from internationalflavor.vat_number import VATNumberField, VATNumberFormField
+# from phonenumber_field.formfields import PhoneNumberField
+# from taggit.forms import TagField
 
 
 class GenericBaseMixin(object):
-    # USER_MODEL = User # there is possibility to manualy specify user model to be used, see user_model()
+    # USER_MODEL = User
     objs = OrderedDict()
     TEST_PASSWORD = 'testpassword'
-    IGNORE_MODEL_FIELDS = {}    # values for these model fields will not be generated, use for fields with automatically assigned values, for example {MPTTModel: ['lft', 'rght', 'tree_id', 'level']}
-    PRINT_SORTED_MODEL_DEPENDENCY = False
+    RUN_ONLY_THESE_URL_NAMES = []  # for debug purposes to save time
+    IGNORE_URL_NAMES_CONTAINING = []
 
-    # params for GenericTestMixin.test_urls
-    RUN_ONLY_THESE_URL_NAMES = []  # if not empty will run tests only for provided urls, for debug purposes to save time
-    RUN_ONLY_URL_NAMES_CONTAINING = []  # if not empty will run tests only for urls containing at least one of provided patterns
-    IGNORE_URL_NAMES_CONTAINING = []    # contained urls will not be tested
-    POST_ONLY_URLS = [] # run only post request tests for these urls
-    GET_ONLY_URLS = []  # run only get request tests for these urls
 
-    @classmethod
-    def manual_model_dependency(cls):
-        '''
-        Use to manually specify model dependency which are not accounted for by default (check get_sorted_models_dependency output),
-        for example if generating objs with provided m2m values, or otherwise required in model_field_values_map
-        return {
-            User: {Group}
-        }
-        '''
-
-        return {}
-
-    @classmethod
-    def model_field_values_map(cls):
-        '''
-        Enables generate objects with specific values, for example for User model:
-
-        {
+    @property
+    def model_field_values_map(self):
+        '''{
             User: {
-                'user_1': lambda cls: {
-                    'username': f'user.{cls.next_id(User)}@example.com',
-                    'email': f'user.{cls.next_id(User)}@example.com',
+                'my_user': {
+                    'username': lambda self: f'user.{GenericTestMixin.next_id(User)}@example.com',
+                    'email': lambda self: f'user.{GenericTestMixin.next_id(User)}@example.com',
                     'password': 'testpassword',
                     'is_superuser': True,
-                },
-                'user_2': lambda cls: {
-                    'username': f'user.{cls.next_id(User)}@example.com',
-                    'email': f'user.{cls.next_id(User)}@example.com',
-                    'password': 'testpassword',
-                    'is_superuser': False,
                 }
             },
         }
         '''
         return {}
 
-    @classmethod
-    def user_model(cls):
-        '''
-        User model used for login and permissions
-        '''
+    @property
+    def user_model(self):
         try:
-            return cls.USER_MODEL
+            return self.USER_MODEL
         except:
             return get_user_model()
 
-    @classmethod
-    def default_field_name_map(cls):
-        '''
-        field values by field name used to generate objects, this has priority before default_field_map,
-        values can be callables with field variable, extend in subclass as needed
-        '''
-        return {
-            'year': now().year,
-            'month': now().month,
-        }
-
-    @classmethod
-    def default_field_map(cls):
-        '''
-        field values by field class used to generate objects, values can be callables with field variable,
-        extend in subclass as needed
-        '''
-        return {
-            ForeignKey: lambda f: cls.get_generated_obj(f.related_model),
-            OneToOneField: lambda f: cls.get_generated_obj(f.related_model),
+    @property
+    def default_field_map(self):
+        # values can be callables with with field variable
+        map = {
+            ForeignKey: lambda f: self.get_generated_obj(f.related_model),
+            OneToOneField: lambda f: self.get_generated_obj(f.related_model),
             BooleanField: False,
             TextField: lambda f: '{}_{}'.format(f.model._meta.label_lower, f.name),
-            CharField: lambda f: list(f.choices)[0][0] if f.choices else '{}'.format(f.name)[:f.max_length],
-            SlugField: lambda f: '{}_{}'.format(f.name, cls.next_id(f.model)),
-            EmailField: lambda f: '{}.{}@example.com'.format(f.model._meta.label_lower, cls.next_id(f.model)),
-            gis_models.PointField: Point(0.1276, 51.5072),
-            gis_models.MultiPointField: MultiPoint(Point(0.1276, 51.5072), Point(0.1276, 51.5072)),
-            DateTimeField: lambda f: now(),
-            DateField: lambda f: now().date(),
-            postgres_fields.DateTimeRangeField: (now(), now() + timedelta(days=1)),
-            postgres_fields.DateRangeField: (now().date(), now() + timedelta(days=1)),
-            FileField: lambda f: cls.get_pdf_file_mock(),
-            IntegerField: lambda f: cls.get_num_field_mock_value(f),
-            PositiveSmallIntegerField: lambda f: cls.get_num_field_mock_value(f),
-            DecimalField: lambda f: cls.get_num_field_mock_value(f),
-            PositiveIntegerField: lambda f: cls.get_num_field_mock_value(f),
-            SmallIntegerField: lambda f: cls.get_num_field_mock_value(f),
-            BigIntegerField: lambda f: cls.get_num_field_mock_value(f),
-            FloatField: lambda f: cls.get_num_field_mock_value(f),
-            ImageField: lambda f: cls.get_image_file_mock(),
+            CharField: lambda f: list(f.choices)[0][0] if f.choices else '{}_{}'.format(f.model._meta.label_lower, f.name)[:f.max_length],
+            SlugField: lambda f: '{}_{}'.format(f.name, self.next_id(f.model)),
+            EmailField: lambda f: '{}.{}@example.com'.format(f.model._meta.label_lower, self.next_id(f.model)),
+            # django_countries_fields.CountryField: 'LU',
+            CountryField: 'LU',
+            # IBANField: 'LU28 0019 4006 4475 0000',
+            # SWIFTBICField: 'BCEELULL',
+            VATNumberField: lambda f: 'LU{}'.format(random.randint(10000000, 99999999)),  # 'GB904447273',
+            DateTimeField: now(),
+            DateField: now().date(),
+            DateTimeRangeField: (now(), now() + timedelta(days=1)),
+            DateRangeField: (now().date(), now() + timedelta(days=1)),
+            FileField: self.get_pdf_file_mock(),
+            IntegerField: self.get_num_field_mock_value,
+            PositiveSmallIntegerField: self.get_num_field_mock_value,
+            DecimalField: self.get_num_field_mock_value,
+            PositiveIntegerField: self.get_num_field_mock_value,
+            SmallIntegerField: self.get_num_field_mock_value,
+            BigIntegerField: self.get_num_field_mock_value,
+            FloatField: self.get_num_field_mock_value,
+            ImageField: self.get_image_file_mock(),
             GenericIPAddressField: '127.0.0.1',
-            postgres_fields.JSONField: {},
-            postgres_fields.ArrayField: lambda f: [cls.default_field_map()[f.base_field.__class__](f.base_field)],
             JSONField: {},
-            URLField: lambda f: f'www.google.com',
-            if_countries.CountryField: 'LU',
-            if_iban.IBANField: 'LU28 0019 4006 4475 0000',
-            if_vat.VATNumberField: lambda f: 'LU{}'.format(random.randint(10000000, 99999999)),  # 'GB904447273',
         }
 
-    @classmethod
-    def default_form_field_map(cls):
-        '''
-        field values by form field class used to generate form values, values can be callables with field variable,
-        extend in subclass as needed
-        '''
-        return {
-            django_filter_fields.ModelChoiceField: lambda f: f.queryset.first().id,
-            django_filter_fields.ModelMultipleChoiceField: lambda f: f.queryset.first().id,
-            django_filter_fields.MultipleChoiceField: lambda f: [list(f.choices)[-1][0]] if f.choices else ['{}'.format(f.label)],
-            django_filter_fields.ChoiceField: lambda f: list(f.choices)[-1][0],
-            django_filter_fields.RangeField: lambda f: [1, 100],
-            django_filter_fields.DateRangeField: lambda f: (now().date(), now() + timedelta(days=1)),
-            django_form_fields.EmailField: lambda f: cls.get_new_email(),
+        try:
+            map.update({
+                gis_models.PointField: Point(0.1276, 51.5072),
+            })
+        except NameError:
+            pass
+
+        return map
+
+    @property
+    def default_form_field_map(self):
+        # values can be callables with with field variable
+        map = {
+            django_form_fields.EmailField: lambda f: self.get_new_email(),
             django_form_fields.CharField: lambda f: '{}_{}'.format(f.label, random.randint(1, 999))[:f.max_length],
-            django_form_fields.TypedChoiceField: lambda f: list(f.choices)[-1][1][0][0] if f.choices and isinstance(list(f.choices)[-1][1], list) else list(f.choices)[-1][0] if f.choices else '{}'.format(f.label)[:f.max_length],
-            django_form_fields.ChoiceField: lambda f: list(f.choices)[-1][1][0][0] if f.choices and isinstance(list(f.choices)[-1][1], list) else list(f.choices)[-1][0] if f.choices else '{}'.format(f.label)[:f.max_length],
-            django_form_fields.ImageField: lambda f: cls.get_image_file_mock(),
-            django_form_fields.FileField: lambda f: cls.get_pdf_file_mock(),
-            django_form_fields.DateTimeField: lambda f: now().strftime(list(f.input_formats)[-1]) if hasattr(f, 'input_formats') else now(),
+            django_form_fields.TypedChoiceField: lambda f: list(f.choices)[-1][0] if f.choices else '{}'.format(f.label)[:f.max_length],
+            django_form_fields.ChoiceField: lambda f: list(f.choices)[-1][0] if f.choices else '{}'.format(f.label)[:f.max_length],
+            # PhoneNumberField: '+420723270884',
+            # PasswordField: self.TEST_PASSWORD,
+            # SetPasswordField: self.TEST_PASSWORD,
+            CountryFormField: 'LU',  # random.choice(UN_RECOGNIZED_COUNTRIES),
+            # django_countries_fields.LazyTypedChoiceField: 'LU',  # random.choice(UN_RECOGNIZED_COUNTRIES),
+            VATNumberFormField: lambda f: 'LU{}'.format(random.randint(10000000, 99999999)),  # 'GB904447273',
+            django_form_fields.URLField: 'www.example.com',
+            django_form_fields.ImageField: self.get_image_file_mock(),
+            django_form_fields.FileField: self.get_pdf_file_mock(),
+            django_form_fields.DateTimeField: lambda f: now().strftime(f.input_formats[-1]) if hasattr(f, 'input_formats') else now(),
             django_form_fields.DateField: now().date(),
-            django_form_fields.IntegerField: lambda f: cls.get_num_field_mock_value(f),
-            django_form_fields.DecimalField: lambda f: cls.get_num_field_mock_value(f),
+            django_form_fields.IntegerField: lambda f: self.get_num_field_mock_value(f),
+            django_form_fields.DecimalField: lambda f: self.get_num_field_mock_value(f),
             django_form_models.ModelMultipleChoiceField: lambda f: [f.queryset.first().id],
             django_form_models.ModelChoiceField: lambda f: f.queryset.first().id,
             django_form_fields.BooleanField: True,
+            django_filter_fields.ModelChoiceField: lambda f: f.queryset.first().id,
+            django_filter_fields.ChoiceField: lambda f: list(f.choices)[-1][0],
             django_form_fields.NullBooleanField: True,
-            django_form_fields.MultipleChoiceField: lambda f: [list(f.choices)[-1][0]] if f.choices else ['{}'.format(f.label)],
-            django_form_fields.URLField: lambda f: f'www.google.com',
+            # IBANFormField: 'LU28 0019 4006 4475 0000',
+            # TagField: lambda f: 'tag',
             django_form_fields.DurationField: 1,
-            django_form_fields.JSONField: '',
-            django_form_fields.SplitDateTimeField: lambda f: [now().date(), now().time()],
-            django_form_fields.GenericIPAddressField: '127.0.0.1',
-            django_form_fields.FloatField: lambda f: cls.get_num_field_mock_value(f),
-            gis_forms.PointField: 'POINT (0.1276 51.5072)',
-            postgres_forms.HStoreField: '',
-            postgres_forms.SimpleArrayField: lambda f: [cls.default_form_field_map()[f.base_field.__class__](f.base_field)],
-            postgres_forms.DateTimeRangeField: lambda f: [now().strftime(list(f.input_formats)[-1]) if hasattr(f, 'input_formats') else now(), now().strftime(list(f.input_formats)[-1]) if hasattr(f, 'input_formats') else now()],
-            pragmatic_fields.AlwaysValidChoiceField: lambda f: list(f.choices)[-1][0] if f.choices else '{}'.format(f.label),
-            pragmatic_fields.AlwaysValidMultipleChoiceField: lambda f: f'{list(f.choices)[-1][0]}' if f.choices else '{}'.format(f.label),
-            pragmatic_fields.SliderField: lambda f: f'{f.min},{f.max}' if f.has_range else f'{f.min}',
-            if_countries.CountryFormField: 'LU',  # random.choice(UN_RECOGNIZED_COUNTRIES),
-            if_iban.IBANFormField: 'LU28 0019 4006 4475 0000',
-            if_vat.VATNumberFormField: lambda f: 'LU{}'.format(random.randint(10000000, 99999999)),  # 'GB904447273',
+            postgress_forms.SimpleArrayField: lambda f: [self.default_form_field_map[f.base_field.__class__](f.base_field)],
+            django_form_fields.FloatField: lambda f: self.get_num_field_mock_value(f),
+            django_form_fields.MultipleChoiceField: lambda f: [list(f.choices)[-1][0]] if f.choices else ['{}'.format(f.label)],
         }
+        try:
+            map.update({
+                gis_forms.PointField: 'POINT (0.1276 51.5072)',
+            })
+        except NameError:
+            pass
+        return map
 
-    @classmethod
-    def import_modules_if_needed(cls):
-        '''
-        import all modules encountered if some where not yet imported, for example when searching for models dependency or urls in source code
-        '''
-        module_names = cls.get_submodule_names(cls.CHECK_MODULES, cls.CHECK_MODULES, cls.EXCLUDE_MODULES)
+    def import_modules_if_needed(self):
+        module_names = self.get_submodule_names(self.CHECK_MODULES, self.CHECK_MODULES, self.EXCLUDE_MODULES)
 
         for module_name in module_names:
             try:
@@ -227,9 +179,8 @@ class GenericBaseMixin(object):
                 print('Failed to import module: {}'.format(module_name))
                 raise e
 
-    @classmethod
-    def get_source_code(cls, modules, lines=True):
-        module_names = sorted(cls.get_submodule_names(cls.CHECK_MODULES, modules, cls.EXCLUDE_MODULES))
+    def get_source_code(self, modules, lines=True):
+        module_names = sorted(self.get_submodule_names(self.CHECK_MODULES, modules, self.EXCLUDE_MODULES))
 
         if lines:
             return OrderedDict(
@@ -237,16 +188,13 @@ class GenericBaseMixin(object):
 
         return OrderedDict(((module_name, inspect.getsource(sys.modules[module_name])) for module_name in module_names))
 
-    @classmethod
-    def apps_to_check(cls):
-        '''
-        return all the apps to to be tested, or used to look for models dependency
-        '''
-        return [app for app in apps.get_app_configs() if app.name.startswith(tuple(cls.CHECK_MODULES))]
+    @property
+    def apps_to_check(self):
+        return [app for app in apps.get_app_configs() if app.name.startswith(tuple(self.CHECK_MODULES))]
 
-    @classmethod
-    def get_module_class_methods(cls, module):
-        classes = cls.get_module_classes(module)    # get not imported classes defined in module
+    def get_module_class_methods(self, module):
+        # get classes defined in module, not imported
+        classes = self.get_module_classes(module)
         methods = set()
 
         for cls in classes:
@@ -254,26 +202,15 @@ class GenericBaseMixin(object):
 
         return methods
 
-    @classmethod
-    def get_module_classes(cls, module):
-        '''
-        returns only not imported classes defined in module
-        '''
+    def get_module_classes(self, module):
         return {m[1] for m in inspect.getmembers(module, inspect.isclass) if m[1].__module__ == module.__name__}
 
-    @classmethod
-    def get_module_functions(cls, module):
-        '''
-        returns only not imported functions defined in module
-        '''
+    def get_module_functions(self, module):
         return {m[1] for m in inspect.getmembers(module, inspect.isfunction) if m[1].__module__ == module.__name__}
 
-    @classmethod
-    def get_submodule_names(cls, parent_module_names, submodule_names, exclude_names=[]):
-        '''
-        looks for submodules of parent_module containing submodule_name and not containing any of exclude_names,
-        which are not package (files, not dirs)
-        '''
+    def get_submodule_names(self, parent_module_names, submodule_names, exclude_names=[]):
+        # looks for submodules of parent_module containing submodule_name and not containing any of exclude_names,
+        # which are not package (files, not dirs)
         module_names = set()
 
         if isinstance(parent_module_names, str):
@@ -299,112 +236,49 @@ class GenericBaseMixin(object):
 
         return (module_names)
 
-    @classmethod
-    def parse_args(cls, args, eval_args=True, eval_kwargs=True):
-        '''
-        parsing args and kwargs as specified
-        '''
+    def parse_args(self, args, eval_args=True, eval_kwargs=True):
         args = 'f({})'.format(args)
         tree = ast.parse(args)
         funccall = tree.body[0].value
+
         if eval_args:
-            args = [ast.literal_eval(arg) for arg in funccall.args if ast.unparse(arg) != '*args']
+            args = [ast.literal_eval(arg) for arg in funccall.args if arg.id != '*args']
         else:
-            args = [ast.unparse(arg) for arg in funccall.args if ast.unparse(arg) != '*args']
+            args = [arg.elts if isinstance(arg, ast.List) else arg.id for arg in funccall.args if isinstance(arg, ast.List) or arg.id != '*args']
 
         if eval_kwargs:
             kwargs = {arg.arg: ast.literal_eval(arg.value) for arg in funccall.keywords if arg.arg is not None}
         else:
-            kwargs = {arg.arg: ast.unparse(arg.value) for arg in funccall.keywords if arg.arg is not None}
-
-        # if eval_args:
-        #     args = [ast.literal_eval(arg) for arg in funccall.args if arg.id != '*args']
-        # else:
-        #     args = [arg.elts if isinstance(arg, ast.List) else arg.id for arg in funccall.args if isinstance(arg, ast.List) or ast.unparse(arg) != '*args']
-        #
-        # if eval_kwargs:
-        #     kwargs = {arg.arg: ast.literal_eval(arg.value) for arg in funccall.keywords if arg.arg is not None}
-        # else:
-        #     kwargs = {arg.arg: arg.value.attr if isinstance(arg.value, ast.Attribute) else arg.value.s if isinstance(arg.value, ast.Str) else arg.value.id  for arg in funccall.keywords if arg.arg is not None}
+            kwargs = {arg.arg: arg.value.attr if isinstance(arg.value, ast.Attribute) else arg.value.s if isinstance(arg.value, ast.Str) else arg.value.id  for arg in funccall.keywords if arg.arg is not None}
 
         return args, kwargs
 
-    @classmethod
-    def get_generated_email(cls, model=None):
-        '''
-        shortuct to get genrated email
-        '''
+    def get_generated_email(self, model=None):
         if model is None:
-            model = cls.user_model()
+            model = self.user_model
 
-        return cls.get_generated_obj(model).email
+        return self.get_generated_obj(model).email
 
-    @classmethod
-    def get_new_email(cls):
+    def get_new_email(self):
         return 'email.{}@example.com'.format(random.randint(1, 999))
 
-    @classmethod
-    def get_mock_request(cls, **kwargs):
-        return cls.get_request('/', **kwargs)
-
-    @classmethod
-    def get_request(cls, path='/', **kwargs):
-        request = RequestFactory().get(path)
-
-        for key, value in kwargs.items():
-            setattr(request, key, value)
-
-        return request
-
-    @classmethod
-    def get_response(cls, **kwargs):
-        # return view_class.as_view(**view_kwargs)(request) response for request=RequestFactory.get() with additional request_attributes
-        path = kwargs.get('path', '/')
-        view_class = kwargs.get('view_class', None)
-        view_kwargs = kwargs.get('view_kwargs', {})
-        request_kwargs = kwargs.get('request_atrributes', {})
-
-        if view_class is None:
-            # get from urls.py
-            raise ValueError('view_class not specified')
-
-        request = cls.get_request(path, **request_kwargs)
-        return view_class.as_view(**view_kwargs)(request)
-
-    @classmethod
-    def get_response_view(cls, **kwargs):
-        response = cls.get_response(**kwargs)
-        return response.context_data['view']
-
-    @classmethod
-    def get_response_view_as_filter_function(cls, **kwargs):
-        # returns function for specific response view as function of filter kwargs in url,
-        def filter_function(**filter_kargs):
-            kwargs['path'] = kwargs.get('path', '/') + '?' + '&'.join([f'{key}={value}' for key, value in filter_kargs.items()])
-            return cls.get_response_view(**kwargs)
-
-        return filter_function
-
-    @classmethod
-    def generate_kwargs(cls, args=[], kwargs={}, func=None, default={}):
+    def generate_kwargs(self, args=[], kwargs={}, func=None, default={}):
         # maching kwarg names with
         # 1. model names and assigns generated objs acordingly,
         # 2. field names of instance.model if exists such that instance.func
-        models = {model._meta.label_lower.split('.')[-1]: model for model in cls.get_models()}
-        result_kwargs = {**default}
-
+        models = {model._meta.label_lower.split('.')[-1]: model for model in self.get_models()}
+        result_kwargs = {}
         try:
             for name, value in kwargs.items():
                 if name in default:
-                    # result_kwargs[name] = default[name]
-                    pass
+                    result_kwargs[name] = default[name]
                 elif name == 'email':
-                    result_kwargs[name] = cls.get_generated_email()
+                    result_kwargs[name] = self.get_generated_email()
                 else:
                     matching_models = [model for model_name, model in models.items() if model_name == name]
 
                     if len(matching_models) == 1:
-                        result_kwargs[name] = cls.get_generated_obj(matching_models[0])
+                        result_kwargs[name] = self.get_generated_obj(matching_models[0])
                     elif not func is None:
                         model = None
 
@@ -413,7 +287,7 @@ class GenericBaseMixin(object):
 
                         if not model is None:
                             try:
-                                result_kwargs[name] = getattr(cls.get_generated_obj(model), name)
+                                result_kwargs[name] = getattr(self.get_generated_obj(model), name)
                             except AttributeError:
                                 pass
 
@@ -428,12 +302,12 @@ class GenericBaseMixin(object):
             if arg in default:
                 result_kwargs[arg] = default[arg]
             elif arg == 'email':
-                result_kwargs[arg] = cls.get_generated_email()
+                result_kwargs[arg] = self.get_generated_email()
             else:
                 matching_models = [model for name, model in models.items() if name == arg]
 
                 if len(matching_models) == 1:
-                    result_kwargs[arg] = cls.get_generated_obj(matching_models[0])
+                    result_kwargs[arg] = self.get_generated_obj(matching_models[0])
                 elif not func is None:
                     model = None
 
@@ -442,41 +316,32 @@ class GenericBaseMixin(object):
 
                     if not model is None:
                         try:
-                            result_kwargs[arg] = getattr(cls.get_generated_obj(model), arg)
+                            result_kwargs[arg] = getattr(self.get_generated_obj(model), arg)
                         except AttributeError:
                             pass
 
         return result_kwargs
 
-    @classmethod
-    def generate_func_args(cls, func, default={}):
+    def generate_func_args(self, func, default={}):
         source = inspect.getsource(func)
         args = r'([^\)]*)'
         args = re.findall('def {}\({}\):'.format(func.__name__, args), source)
-        args = [args[0].replace(' *,', '')] # dont really get why would someone use this but it happened
-        return cls.generate_kwargs(*cls.parse_args(args[0], eval_args=False, eval_kwargs=False), func=func, default=default)
+        return self.generate_kwargs(*self.parse_args(args[0], eval_args=False, eval_kwargs=False), func=func, default=default)
 
-    @classmethod
-    def generate_form_data(cls, form, default_data):
-        if inspect.isclass(form):
-            # if class is passed try to get instance
-            form = form(**cls.init_form_kwargs(form, {}))
-
+    def generate_form_data(self, form, default_data):
         data = {}
 
-        for name, field in default_data.items():
-            value = default_data[name]
-            data[name] = value(cls) if callable(value) else value
-
         for name, field in form.fields.items():
-            if name not in data and not isinstance(field, django_form_models.InlineForeignKeyField): # inline fk is is sued in inline formsets
-                value = cls.default_form_field_map()[field.__class__]
+            if name in default_data:
+                value = default_data[name]
+                data[name] = value(self) if callable(value) else value
+            else:
+                value = self.default_form_field_map[field.__class__]
                 data[name] = value(field) if callable(value) else value
 
         return data
 
-    @classmethod
-    def get_url_namespace_map(cls):
+    def get_url_namespace_map(self):
         resolver = urls.get_resolver(urls.get_urlconf())
         namespaces = {'': [key for key in resolver.reverse_dict.keys() if not callable(key)]}
         for key_1, resolver_1 in resolver.namespace_dict.items():
@@ -491,18 +356,16 @@ class GenericBaseMixin(object):
 
         return namespaces
 
-    @classmethod
-    def get_url_namespaces(cls):
-        source_by_module = cls.get_source_code(['urls'], lines=False)
+    def get_url_namespaces(self):
+        source_by_module = self.get_source_code(['urls'], lines=False)
         namespace_map = OrderedDict()
 
         for module_name, source_code in source_by_module.items():
             regex_paths = re.findall(r'app_name=["\']([\w_]+)["\'], ?namespace=["\']([\w_]+)["\']', source_code)
             namespace_map.update({})
 
-    @classmethod
-    def get_url_views_by_module(cls):
-        source_by_module = cls.get_source_code(['urls'], lines=False)
+    def get_url_views_by_module(self):
+        source_by_module = self.get_source_code(['urls'], lines=False)
         paths_by_module = OrderedDict()
 
         skip_comments = r'([ \t]*#*[ \t]*)'
@@ -525,26 +388,23 @@ class GenericBaseMixin(object):
                 app_name = [module_name.replace('.urls', '').split('.')[-1]]
 
             paths_by_module[module_name] = [{
-                'app_name': app_name[0],
-                'path_name': regex_path[5],
+                'path_name': '{}:{}'.format(app_name[0], regex_path[5]),
                 'url_pattern': regex_path[1] if regex_path[1] else regex_path[2],
                 'view_class': imported_classes.get(regex_path[3], None),
-                'view_params': cls.parse_args(regex_path[4], eval_args=False, eval_kwargs=False),
+                'view_params': self.parse_args(regex_path[4], eval_args=False, eval_kwargs=False),
             } for regex_path in regex_paths if '#' not in regex_path[0]]
 
         return paths_by_module
 
-    @classmethod
-    def get_apps_by_name(cls, app_name=[]):
+    def get_apps_by_name(self, app_name=[]):
         if isinstance(app_name, str):
             app_name = [app_name]
 
         return [app for app in apps.get_app_configs() if app.name.startswith(tuple(app_name))]
 
-    @classmethod
-    def get_models_from_app(cls, app):
+    def get_models_from_app(self, app):
         if isinstance(app, str):
-            apps = cls.get_apps_by_name(app_name=app)
+            apps = self.get_apps_by_name(app_name=app)
 
             if len(apps) > 1:
                 raise ValueError('App name "{}" is ambiguous'.format(app))
@@ -553,11 +413,10 @@ class GenericBaseMixin(object):
 
         return [model for model in app.get_models()]
 
-    @classmethod
-    def get_models(cls):
-        models = [model for app in cls.apps_to_check() for model in app.get_models()]
+    def get_models(self):
+        models = [model for app in self.apps_to_check for model in app.get_models()]
 
-        for module_name, module_params in cls.get_url_views_by_module().items():
+        for module_name, module_params in self.get_url_views_by_module().items():
             for path_params in module_params:
                 model = getattr(path_params['view_class'], 'model', None)
                 if model and model not in models:
@@ -571,17 +430,15 @@ class GenericBaseMixin(object):
 
         return models
 
-    @classmethod
-    def get_models_with_required_fields(cls):
+    def get_models_with_required_fields(self):
         return OrderedDict({
             model: [f for f in model._meta.get_fields() if
                     not getattr(f, 'blank', False) and f.concrete and not f.auto_created]
-            for model in cls.get_models()
+            for model in self.get_models()
         })
 
-    @classmethod
-    def get_models_dependency(cls, required_only=True):
-        models = cls.get_models()
+    def get_models_dependency(self, required_only=True):
+        models = self.get_models()
 
         # find direct dependencies
         dependency = OrderedDict({
@@ -592,7 +449,7 @@ class GenericBaseMixin(object):
                 'not_required': {} if required_only else {f.related_model for f in model._meta.get_fields()
                                                           if getattr(f, 'blank', False) and isinstance(f,
                                                                                                        RelatedField) and f.concrete and not f.auto_created},
-            } for model in cls.get_models()
+            } for model in self.get_models()
         })
 
         missing_models = set()
@@ -616,7 +473,7 @@ class GenericBaseMixin(object):
         })
 
         # add manualy set dependencies
-        for model, relations in cls.manual_model_dependency().items():
+        for model, relations in self.manual_model_dependency().items():
             dependency[model]['required'] |= relations
 
         # add deeper level dependencies
@@ -629,8 +486,7 @@ class GenericBaseMixin(object):
 
         return dependency
 
-    @classmethod
-    def get_sorted_models_dependency(cls, required_only=False, reverse=False):
+    def get_sorted_models_dependency(self, required_only=False, reverse=False):
         def compare_models_dependency(x, y):
             # less dependent first
             if x[0] in y[1]['required'] and y[0] in x[1]['required']:
@@ -671,25 +527,14 @@ class GenericBaseMixin(object):
 
             return 0
 
-        # sort alphabetically for consistent initial order
-        sorted_models = OrderedDict(sorted(cls.get_models_dependency(required_only).items(), key=lambda x: x[0]._meta.label, reverse=reverse))
-
-        # move manual dependencies to the beggining to force correct order (sort by dependencies is too ambiguous)
-        for model, dependcies in cls.manual_model_dependency().items():
-            for dependency in dependcies:
-                sorted_models.move_to_end(dependency, last=reverse)
-
-        # sort by dependencies
-        sorted_models = OrderedDict(sorted(sorted_models.items(), key=functools.cmp_to_key(compare_models_dependency), reverse=reverse))
-
-        if cls.PRINT_SORTED_MODEL_DEPENDENCY:
-            pprint(sorted_models)
-
+        sorted_models = sorted(self.get_models_dependency(required_only).items(), key=lambda x: x[0]._meta.label,
+                               reverse=reverse)
+        sorted_models = OrderedDict(
+            sorted(sorted_models, key=functools.cmp_to_key(compare_models_dependency), reverse=reverse))
         return sorted_models
 
-    @classmethod
-    def generate_objs(cls):
-        models_hierarchy = cls.get_sorted_models_dependency(required_only=False)
+    def generate_objs(self):
+        models_hierarchy = self.get_sorted_models_dependency(required_only=False)
         generated_objs = OrderedDict()
         models = models_hierarchy.keys()
 
@@ -697,72 +542,34 @@ class GenericBaseMixin(object):
             if model._meta.proxy:
                 continue
 
-            generated_objs[model] = cls.generate_model_objs(model)
+            generated_objs[model] = self.generate_model_objs(model)
 
         return generated_objs
 
-    @classmethod
-    def delete_ojbs(cls):
-        models_hierarchy = cls.get_sorted_models_dependency(required_only=False, reverse=True)
+    def delete_ojbs(self):
+        models_hierarchy = self.get_sorted_models_dependency(required_only=False, reverse=True)
 
         for model in models_hierarchy.keys():
             model.objects.all().delete()
 
-    @classmethod
-    def get_models_fields(cls, model, required=None, related=None):
+    def get_models_fields(self, model, required=None, related=None):
         is_required = lambda f: not getattr(f, 'blank', False) if required is True else getattr(f, 'blank', False) if required is False else True
-        is_related = lambda f: isinstance(f, RELATED_FIELDS) if related is True else not isinstance(f, RELATED_FIELDS) if related is False else True
-        is_gm2m = lambda f: isinstance(f, GM2MField) if 'gm2m' in getattr(settings, 'INSTALLED_APPS') and related is True else False
-        return [f for f in model._meta.get_fields() if (is_required(f) and is_related(f) and f.concrete and not f.auto_created) or (is_required(f) and is_gm2m(f))]
+        is_related = lambda f: isinstance(f, RelatedField) if related is True else not isinstance(f, RelatedField) if related is False else True
+        # required = lambda f: not getattr(f, 'blank', False) if required_only else True
+        # related = lambda f: isinstance(f, RelatedField) if related_only else True
+        return [f for f in model._meta.get_fields() if is_required(f) and is_related(f) and f.concrete and not f.auto_created]
 
-    @classmethod
-    def generate_model_field_values(cls, model, field_values={}):
-        not_related_fields = cls.get_models_fields(model, related=False)
-        related_fields = cls.get_models_fields(model, related=True)
-        ignore_model_fields = cls.IGNORE_MODEL_FIELDS.get(model, [])
-        field_values = dict(field_values)
-        m2m_values = {}
-        unique_fields = list(itertools.chain(*model._meta.unique_together))
+    def generate_model_field_values(self, model, field_values={}):
+        not_related_fields = self.get_models_fields(model, related=False)
+        related_fields = self.get_models_fields(model, related=True)
 
         for field in not_related_fields:
-            if field.name not in ignore_model_fields and field.name not in field_values and (not isinstance(field, ManyToManyField)):
-                field_value = field.default
-
-                if inspect.isclass(field.default) and issubclass(field.default, NOT_PROVIDED) or field.default is None or field_value in [list]:
-                    field_value = cls.default_field_name_map().get(field.name, None)
-
-                    if field_value is None:
-                        field_value = cls.default_field_map().get(field.__class__, None)
-
-                    if callable(field_value):
-                        field_value = field_value(field)
-
-                else:
-                    if callable(field_value):
-                        field_value = field_value()
-
-                if field_value is None:
-                    raise ValueError(
-                        'Don\'t know ho to generate {}.{} value {}'.format(model._meta.label, field.name, field_value))
-
-                if isinstance(field, CharField) and (field.name in unique_fields or field.unique) and not field.choices:
-                    field_value = f'{field_value}_{cls.next_id(model)}'
-
-                field_values[field.name] = field.to_python(field_value) # to save default lazy values correctly, should not be problem in any case
-
-        m2m_classes = (ManyToManyField, GM2MField) if 'gm2m' in getattr(settings, 'INSTALLED_APPS') else ManyToManyField
-
-        for field in related_fields:
-            if isinstance(field, m2m_classes):
-                if field.name in field_values:
-                    m2m_values[field.name] = field_values[field.name]
-                    del field_values[field.name]
-            elif field.name not in ignore_model_fields and field.name not in field_values and field.related_model.objects.exists():
+            if field.name not in self.IGNORE_MODEL_FIELDS and field.name not in field_values and (not isinstance(field, ManyToManyField)):
                 field_value = field.default
 
                 if inspect.isclass(field.default) and issubclass(field.default,
                                                                  NOT_PROVIDED) or field.default is None:
-                    field_value = cls.default_field_map().get(field.__class__, None)
+                    field_value = self.default_field_map.get(field.__class__, None)
 
                     if callable(field_value):
                         field_value = field_value(field)
@@ -777,132 +584,106 @@ class GenericBaseMixin(object):
 
                 field_values[field.name] = field_value
 
-        return field_values, m2m_values
+        # generate non required field values
+        for field in related_fields:
+            if field.name not in self.IGNORE_MODEL_FIELDS and field.name not in field_values and (
+            not isinstance(field, ManyToManyField)) and field.related_model.objects.exists():
+                field_value = field.default
 
-    @classmethod
-    def generate_model_objs(cls, model):
-        # required_fields = cls.get_models_fields(model, required_only=True)
-        # related_fields = cls.get_models_fields(model, related_only=True)
-        model_obj_values_map = cls.model_field_values_map().get(model, {cls.default_object_name(model): {}})
+                if inspect.isclass(field.default) and issubclass(field.default,
+                                                                 NOT_PROVIDED) or field.default is None:
+                    field_value = self.default_field_map.get(field.__class__, None)
+
+                    if callable(field_value):
+                        field_value = field_value(field)
+
+                else:
+                    if callable(field_value):
+                        field_value = field_value()
+
+                if field_value is None:
+                    raise ValueError(
+                        'Don\'t know ho to generate {}.{} value {}'.format(model._meta.label, field.name, field_value))
+
+                field_values[field.name] = field_value
+
+        return field_values
+
+    def generate_model_objs(self, model):
+        # required_fields = self.get_models_fields(model, required_only=True)
+        # related_fields = self.get_models_fields(model, related_only=True)
+        model_obj_values_map = self.model_field_values_map.get(model, {model._meta.label_lower.replace('.', '_'): {}})
         new_objs = []
 
         for obj_name, obj_values in model_obj_values_map.items():
-            obj = cls.objs.get(obj_name, None)
-
-            if obj and obj._meta.model != model:
-                obj_name = model._meta.label_lower
-                obj = cls.objs.get(obj_name, None)
+            obj = self.objs.get(obj_name, None)
 
             if obj:
                 try:
                     obj.refresh_from_db()
                 except model.DoesNotExist:
-                    obj = None
+                    obj=None
 
             if not obj:
-                obj = cls.generate_obj(model, obj_values)
+                field_values = obj_values(self) if callable(obj_values) else obj_values
+                field_values = self.generate_model_field_values(model, field_values)
+
+                if model == self.user_model:
+                    obj = self.create_user(**field_values)
+                else:
+
+                    try:
+                        with transaction.atomic():
+                            obj = getattr(model._default_manager, 'create')(**field_values)
+                    except Exception as e:
+                        obj = model(**field_values)
+                        obj.save()
+
                 new_objs.append(obj)
-                cls.objs[obj_name] = obj
+                self.objs[obj_name] = obj
 
         return new_objs
 
-    @classmethod
-    def generate_obj(cls, model, field_values=None, **kwargs):
-        if field_values is None:
-            # use kwargs for values if dict is not passed
-            if not kwargs:
-                field_values = {}
-            else:
-                field_values = kwargs
 
-        field_values = field_values(cls) if callable(field_values) else field_values
-        field_values, m2m_values = cls.generate_model_field_values(model, field_values)
-        post_save = field_values.pop('post_save', [])
+    def get_generated_obj(self, model, obj_name=None):
+        try:
+            with transaction.atomic():
+                if obj_name is None:
+                    if model._meta.proxy:
+                        model = model._meta.concrete_model
 
-        if model == cls.user_model():
-            if hasattr(cls, 'create_user'):
-                obj = cls.create_user(**field_values)
-            else:
-                obj = getattr(model._default_manager, 'create_user')(**field_values)
-        else:
+                    if model in self.model_field_values_map.keys():
+                        obj_name = sorted(list(self.model_field_values_map[model].keys()))[0]
 
-            try:
-                with transaction.atomic():
-                    obj = getattr(model._default_manager, 'create')(**field_values)
-            except Exception as e:
-                obj = model(**field_values)
-                obj.save()
+                    if obj_name not in self.objs:
+                        obj_name = model._meta.label_lower.replace('.', '_')
 
-        for m2m_attr, m2m_value in m2m_values.items():
-            getattr(obj, m2m_attr).set(m2m_value)
+                obj =  self.objs.get(obj_name, None)
 
-        for action in post_save:
-            action(obj)
+                if obj:
+                    try:
+                        obj.refresh_from_db()
+                    except model.DoesNotExist:
+                        obj = None
 
-        return obj
 
-    @classmethod
-    def default_object_name(cls, model):
-        # app_name, default_name = model._meta.label.split('.')
-        # default_name = re.findall(r'.+?(?:(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])|$)', default_name)
-        # default_name = '_'.join(default_name).lower()
-        return model._meta.label_lower.split('.')[-1]
+                if not obj:
+                    self.generate_model_objs(model)
+                    obj = self.objs.get(obj_name, None)
 
-    @classmethod
-    def get_generated_obj(cls, model=None, obj_name=None):
-        if model is None and obj_name is None:
-            raise Exception(f'At least one argument is necessary')
+                if not obj:
+                    raise Exception('Something\'s fucked')
 
-        if obj_name is None:
-            if model._meta.proxy:
-                model = model._meta.concrete_model
-
-            if model in cls.model_field_values_map().keys():
-                if model == cls.user_model() and 'superuser' in cls.model_field_values_map()[model].keys():
-                    obj_name = 'superuser'
-                elif isinstance(cls.model_field_values_map()[model], OrderedDict):
-                    obj_name = list(cls.model_field_values_map()[model].keys())[0]
-                else:
-                    obj_name = sorted(list(cls.model_field_values_map()[model].keys()))[0]
-
-            if obj_name not in cls.objs.keys():
-                obj_name = cls.default_object_name(model)
-
-        obj = cls.objs.get(obj_name, None)
-
-        if obj:
-            model = obj._meta.model
-
-            try:
-                obj.refresh_from_db()
-            except model.DoesNotExist:
-                obj = None
-
-        if not obj:
-            if model is None:
-                for obj_model, objs in cls.model_field_values_map().items():
-                    if obj_name in objs.keys():
-                        model = obj_model
-                        break
-
-            cls.generate_model_objs(model)
-            obj = cls.objs.get(obj_name, None)
-
-        if not obj:
-            if obj_name:
-                raise Exception(f'{model} object with name {obj_name} doesn\'t exist')
-
-            raise Exception('Something\'s fucked')
-
-        return obj
-        # return cls.objs.get(obj_name, model.objects.first())
+                return obj
+                # return self.objs.get(obj_name, model.objects.first())
+        except Exception as e:
+            raise
 
     @classmethod
     def next_id(cls, model):
         return model.objects.order_by('id').last().id + 1 if model.objects.exists() else 0
 
-    @classmethod
-    def get_pdf_file_mock(cls, name='test.pdf'):
+    def get_pdf_file_mock(self, name='test.pdf'):
         file_path = os.path.join(os.path.dirname(__file__), 'blank.pdf')
         file = open(file_path, 'rb')
         file_mock = SimpleUploadedFile(
@@ -912,8 +693,7 @@ class GenericBaseMixin(object):
         )
         return file_mock
 
-    @classmethod
-    def get_image_file_mock(cls, name='test.jpg', file_path=None):
+    def get_image_file_mock(self, name='test.jpg', file_path=None):
         if file_path is None:
             file_path = os.path.join(os.path.dirname(__file__), 'blank.jpg')
         file = open(file_path, 'rb')
@@ -924,8 +704,7 @@ class GenericBaseMixin(object):
         )
         return file_mock
 
-    @classmethod
-    def get_num_field_mock_value(cls, field):
+    def get_num_field_mock_value(self, field):
         if field.validators:
             if len(field.validators) == 2 \
                     and isinstance(field.validators[0], (MinValueValidator, MaxValueValidator)) \
@@ -941,13 +720,11 @@ class GenericBaseMixin(object):
 
             if isinstance(validator, MinValueValidator):
                 # return validator.limit_value + 1
-                limit_value = int(validator.limit_value)
-                return random.randint(limit_value, limit_value + 9)
+                return random.randint(validator.limit_value, validator.limit_value + 9)
 
             if isinstance(validator, MaxValueValidator):
                 # return validator.limit_value - 1
-                limit_value = int(validator.limit_value)
-                return random.randint(1, limit_value)
+                return random.randint(1, validator.limit_value)
 
         return random.randint(1, 9)
 
@@ -958,7 +735,6 @@ class GenericBaseMixin(object):
                 'params_1: {
                     'args': [],
                     'kwargs': {},
-                    'cookies: {}, # dict or cookie str
                     'data': {},
                     'form_kwargs': {},
                 },
@@ -989,73 +765,33 @@ class GenericBaseMixin(object):
         '''
         return {}
 
-    @classmethod
-    def init_form_kwargs(cls, form_class, default={}):
+    def init_form_kwargs(self, form_class, default={}):
         '''{
-            UserForm: {'user': cls.get_generated_obj(User)},
+            UserForm: {'user': self.get_generated_obj(User)},
         }
         '''
-        return {}.get(form_class, cls.generate_func_args(form_class.__init__, default))
+        return {}.get(form_class, self.generate_func_args(form_class.__init__, default))
 
-    @classmethod
-    def init_filter_kwargs(cls, filter_class, default={}):
-        '''{
-            UserFitler: {'queryset': User.objects.all()}
-        }
-        '''
-        return {}.get(filter_class, cls.generate_func_args(filter_class.__init__, default=default))
-
-    @classmethod
-    def setUpTestData(cls):
-        super(GenericBaseMixin, cls).setUpTestData()
-
-        cls.import_modules_if_needed()
-        cls.generate_objs()
+    def init_filter_kwargs(self, filter_class, default={}):
+        return self.generate_func_args(filter_class.__init__, default=default)
 
     def setUp(self):
-        user = self.objs.get('superuser', self.get_generated_obj(self.user_model()))
-        credentials = {'password': self.TEST_PASSWORD}
-
-        if hasattr(user, 'email'):
-            credentials['email'] = user.email
-
-        if hasattr(user, 'username'):
-            credentials['username'] = user.username
-
-        logged_in = self.client.login(**credentials)
+        super(GenericBaseMixin, self).setUp()
+        self.generate_objs()
+        user = self.objs.get('superuser', self.get_generated_obj(self.user_model))
+        logged_in = self.client.login(email=user.email, username=user.username, password=self.TEST_PASSWORD)
         self.assertTrue(logged_in)
         self.user = user
 
-    @classmethod
-    def print_last_fail(cls, failed):
+    def tearDown(self):
+        # self.delete_ojbs()
+        super(GenericBaseMixin, self).tearDown()
+
+    def print_last_fail(self, failed):
         for k, v in failed[-1].items():
             print(k)
             print(v)
 
-    @classmethod
-    def create_formset_post_data(cls, response, post_data={}):
-        post_data = {**post_data}
-        formset_keys = [key for key in response.context.keys() if 'formset' in key and response.context[key]]
-
-        for formset_key in formset_keys:
-            formset = response.context[formset_key]
-            # prefix_template = formset.empty_form.prefix # default is 'form-__prefix__'
-            prefix = f'{formset.prefix}-'
-            # extract initial formset data
-            management_form_data = formset.management_form.initial
-
-            # add properly prefixed management form fields
-            for key, value in management_form_data.items():
-                # prefix = prefix_template.replace('__prefix__', '')
-                post_data[prefix + key] = value
-
-            # generate individual forms data
-            for index, form in enumerate(formset.forms):
-                form_prefix = f'{prefix}{index}-'
-                default_form_data = {key.replace(form_prefix, ''): value for key, value in post_data.items() if key.startswith(form_prefix)}
-                post_data.update({f'{form_prefix}{key}': value for key, value in cls.generate_form_data(form, default_form_data).items()})
-
-        return post_data
 
 
 class GenericTestMixin(object):
@@ -1063,622 +799,508 @@ class GenericTestMixin(object):
     Only containing generic tests
     eveything else, setup methods etc., is in GenericBaseMixin
     '''
-
-    def prepare_url(self, path_name, path_params, params_map, models, fields):
-        '''
-        generates url arguments if not provided, saves them in params_map['parsed'],
-        returns url with args and list of fail messages
-        '''
-        fails = []
-        path = path_name
-        url_pattern = path_params["url_pattern"]
-        args = path_params['args']
-        view_class = path_params['view_class']
-        parsed_args = params_map.get('args', None)
-
-        if parsed_args is None or not args:
-            parsed_args = []
-
-        if args and not parsed_args:
-            params_map['parsed'] = []
-            # parse args from path params
-            view_model = view_class.model if hasattr(view_class, 'model') else None
-
-            if view_model is None:
-                matching_models = [model for model in models if
-                                   path_name.split(':')[-1].startswith(model._meta.label_lower.split(".")[-1])]
-
-                if len(matching_models) == 1:
-                    view_model = matching_models[0]
-
-            for arg in args:
-                matching_fields = []
-
-                if arg in ['int:pk', 'pk']:
-                    matching_fields = [('pk', view_model)]
-                else:
-                    type, name = arg.split(':') if ':' in arg else ('int', arg)
-
-                    if type not in ['int', 'str', 'slug']:
-                        fails.append(OrderedDict({
-                            'location': 'URL ARG TYPE',
-                            'url name': path_name,
-                            'url pattern': url_pattern,
-                            'arg': arg,
-                            'traceback': 'Cant handle this arg type'
-                        }))
-                        continue
-
-                    if name.endswith('_pk'):
-                        # model name
-                        matching_fields = [('pk', model) for model in models if
-                                           name == '{}_pk'.format(model._meta.label_lower.split(".")[-1])]
-
-                        if len(matching_fields) != 1:
-                            # match field  model
-                            matching_fields = [('pk', model) for model in models if name == '{}_pk'.format(
-                                model._meta.verbose_name.lower().replace(' ', '_'))]
-
-                    else:
-                        # full name and type match
-                        matching_fields = [(field, model) for field, model in fields if
-                                           field.name == name and isinstance(field, IntegerField if type == 'int' else (
-                                           CharField, BooleanField))]
-
-                        if len(matching_fields) > 1:
-                            # match field  model
-                            matching_fields = [(field, model) for field, model in matching_fields if
-                                               model == view_model]
-
-                        elif not matching_fields:
-                            # full name match
-                            matching_fields = [(field, model) for field, model in fields if
-                                               field.name == name and not model._meta.proxy]
-
-                            if not matching_fields:
-                                # match name in form model_field to model and field
-                                matching_fields = [(field, model) for field, model in fields if
-                                                   name == '{}_{}'.format(model._meta.label_lower.split(".")[-1],
-                                                                          field.name)]
-
-                            if not matching_fields:
-                                # this might make problems as only partial match is made
-                                matching_fields = [(p[0], view_model) for p in
-                                                   inspect.getmembers(view_model, lambda o: isinstance(o, property)) if
-                                                   p[0].startswith(name)]
-
-                            if not matching_fields:
-                                # name is contained in field.name of view model
-                                matching_fields = [(field, model) for field, model in fields if
-                                                   model == view_model and name in field.name]
-
-                if len(matching_fields) != 1 or matching_fields[0][1] is None:
-                    fails.append(OrderedDict({
-                        'location': 'URL ARG MATCH',
-                        'url name': path_name,
-                        'url pattern': url_pattern,
-                        'arg': arg,
-                        'matching fields': matching_fields,
-                        'traceback': 'Url arg mathcing failed'
-                    }))
-                    continue
-
-                attr_name, model = matching_fields[0]
-
-                if not isinstance(attr_name, str):
-                    # its Field object
-                    attr_name = attr_name.name
-
-                obj = self.get_generated_obj(model)
-
-                if obj is None:
-                    obj = self.generate_model_objs(model)
-
-                obj = self.get_generated_obj(model)
-                arg_value = getattr(obj, attr_name, None)
-
-                if arg_value in [True, False]:
-                    arg_value = str(arg_value)
-
-                if arg_value is None:
-                    fails.append(OrderedDict({
-                        'location': 'URL ARG PARSE',
-                        'url name': path_name,
-                        'url pattern': url_pattern,
-                        'arg': arg,
-                        'parsed arg': arg_value,
-                        'traceback': 'Url arg parsing failed'
-                    }))
-                    continue
-
-                parsed_args.append(arg_value)
-                params_map['parsed'].append({'obj': obj, 'attr_name': attr_name, 'value': arg_value})
-
-        if len(args) != len(parsed_args):
-            fails.append(OrderedDict({
-                'location': 'URL ARGS PARSED',
-                'url name': path_name,
-                'url pattern': url_pattern,
-                'args': args,
-                'parsed args': parsed_args,
-                'traceback': 'Url args parsing failed'
-            }))
-        else:
-            path = reverse(path_name, args=parsed_args)
-            kwargs = params_map.get('kwargs', {})
-
-            if kwargs:
-                kwargs = '&'.join([f'{key}={value}' for key, value in kwargs.items()])
-                path = f'{path}?{kwargs}'
-
-        return path, parsed_args, fails
-
-    def get_namespace(self, path_params, module_name):
-        module_namespace = module_name.replace('.urls', '').split('.')[-1]
-        app_name = path_params['app_name']
-        path_name = path_params['path_name']
-        fails = []
-
-        namespaces = [namespace for namespace, namespace_path_names in self.get_url_namespace_map().items() if
-                      namespace.endswith(module_namespace) and path_name in namespace_path_names]
-
-        if not namespaces:
-            namespaces = [namespace for namespace, namespace_path_names in self.get_url_namespace_map().items() if
-                          namespace.endswith(app_name) and path_name in namespace_path_names]
-
-        if not namespaces:
-            namespaces = [namespace for namespace, namespace_path_names in self.get_url_namespace_map().items() if
-                          path_name in namespace_path_names]
-
-        if len(namespaces) != 1:
-            fails.append(OrderedDict({
-                'location': 'NAMESPACE',
-                'url name': path_params["path_name"],
-                'app_name': app_name,
-                'module': module_name,
-                'matching namespaces': namespaces,
-                'traceback': 'Namespace matching failed'
-            }))
-
-        return namespaces[0], fails
-
-    def skip_url(self, url_name):
-        if self.RUN_ONLY_THESE_URL_NAMES and url_name not in self.RUN_ONLY_THESE_URL_NAMES:
-            # print('SKIP')
-            return True
-
-        if self.RUN_ONLY_URL_NAMES_CONTAINING and not url_name.endswith(
-                tuple(self.RUN_ONLY_URL_NAMES_CONTAINING)) and not url_name.startswith(
-                tuple(self.RUN_ONLY_URL_NAMES_CONTAINING)):
-            # print('SKIP')
-            return True
-
-        if url_name.endswith(tuple(self.IGNORE_URL_NAMES_CONTAINING)) or url_name.startswith(
-                tuple(self.IGNORE_URL_NAMES_CONTAINING)):
-            # print('SKIP')
-            return True
-
-        return False
-
-    def get_url_test(self, path_name, path, parsed_args, url_pattern, view_class, params_map):
-        fails = []
-        data = params_map.get('data', {})
-
-        try:
-            get_response = self.client.get(path=path, data=data, follow=True)
-            self.assertEqual(get_response.status_code, 200)
-        except Exception as e:
-            fails.append(OrderedDict({
-                'location': 'GET',
-                'url name': path_name,
-                'url': path,
-                'url pattern': url_pattern,
-                'parsed args': parsed_args,
-                'view class': view_class,
-                'traceback': traceback.format_exc()
-            }))
-            return None, fails
-
-        if hasattr(view_class, 'sorting_options'):  # and isinstance(view_class.sorting_options, dict):
-            sorting_options = params_map.get('sorting_options', [])
-
-            if not sorting_options:
-                sorting_options = view_class.sorting_options.keys()
-
-            for sorting in sorting_options:
-                data['sorting'] = sorting
-
-                try:
-                    response = self.client.get(path=path, data=data, follow=True)
-                    self.assertEqual(response.status_code, 200)
-                except Exception as e:
-                    fails.append(OrderedDict({
-                        'location': 'SORTING',
-                        'url name': path_name,
-                        'url': path,
-                        'url pattern': url_pattern,
-                        'parsed args': parsed_args,
-                        'data': data,
-                        'traceback': traceback.format_exc()
-                    }))
-
-        if hasattr(view_class, 'displays'):
-            displays = params_map.get('displays', view_class.displays)
-
-            for display in displays:
-                data['display'] = display
-
-                try:
-                    response = self.client.get(path=path, data=data, follow=True)
-                    self.assertEqual(response.status_code, 200)
-                except Exception as e:
-                    fails.append(OrderedDict({
-                        'location': 'DISPLAY',
-                        'url name': path_name,
-                        'url': path,
-                        'url pattern': url_pattern,
-                        'parsed args': parsed_args,
-                        'data': data,
-                        'traceback': traceback.format_exc()
-                    }))
-                else:
-                    if hasattr(response, 'template_name'):
-                        template = response.template_name[-1] if isinstance(response.template_name,
-                                                                            list) else response.template_name
-
-                        try:
-                            self.assertTrue(template.endswith('{}.html'.format(display)))
-                        except Exception as e:
-                            fails.append(OrderedDict({
-                                'location': 'TEMPLATE',
-                                'url name': path_name,
-                                'url': path,
-                                'url pattern': url_pattern,
-                                'parsed args': parsed_args,
-                                'data': data,
-                                'template': template,
-                                'traceback': traceback.format_exc()
-                            }))
-        return get_response, fails
-
-    def post_url_test(self, path_name, path, parsed_args, url_pattern, view_class, params_map, get_response):
-        fails = []
-        data = params_map.get('data', {})
+    def test_urls(self):
+        raise_every_time = self.RAISE_EVERY_TIME
 
         try:
             with transaction.atomic():
-                form_class = view_class.form_class
-                view_model = view_class.model if hasattr(view_class, 'model') else form_class.model if hasattr(
-                    form_class, 'model') else None
-                form_kwargs = params_map.get('form_kwargs', self.generate_func_args(form_class.__init__))
-                form_kwargs = {key: value(self) if callable(value) else value for key, value in form_kwargs.items()}
-                form_kwargs['data'] = data
-                form = None
 
-                if path_name not in self.POST_ONLY_URLS and 'form' in get_response.context_data:
-                    form = get_response.context_data['form']
-                else:
-                    init_form_kwargs = self.init_form_kwargs(form_class)
+                models = self.get_models()
+                fields = [(f, model) for model in models for f in model._meta.get_fields() if f.concrete and not f.auto_created]
+                failed = []
+                tested = []
+                for module_name, module_params in self.get_url_views_by_module().items():
+                    for path_params in module_params:
+                        print(path_params)
+                        path_namespace, path_name = path_params['path_name'].split(':')
+                        namespaces = [namespace for namespace, namespace_path_names in self.get_url_namespace_map().items() if
+                                      namespace.endswith(path_namespace) and path_name in namespace_path_names]
 
-                    try:
-                        form = form_class(**init_form_kwargs)
-                    except Exception as e:
-                        if not isinstance(form, form_class) or not hasattr(form, 'fields'):
-                            # as long as there is form instance with fields its enough to generate data
-                            fails.append(OrderedDict({
-                                'location': 'POST FORM INIT',
-                                'url name': path_name,
-                                'url': path,
-                                'url pattern': url_pattern,
-                                'parsed args': parsed_args,
-                                'form class': form_class,
-                                'form kwargs': init_form_kwargs,
-                                'traceback': traceback.format_exc()
+                        if len(namespaces) != 1:
+                            failed.append(OrderedDict({
+                                'location': 'NAMESPACE',
+                                'url name': path_params["path_name"],
+                                'module': module_name,
+                                'matching namespaces': namespaces,
+                                'traceback': 'Namespace matching failed'
                             }))
-                            return fails
+                            if raise_every_time:
+                                self.print_last_fail(failed)
+                                raise
+                            continue
 
-                query_dict_data = QueryDict('', mutable=True)
+                        path_name = '{}:{}'.format(namespaces[0], path_name)
 
-                try:
-                    query_dict_data.update(self.generate_form_data(form, data))
-                except Exception as e:
-                    fails.append(OrderedDict({
-                        'location': 'POST GENERATING FORM DATA',
-                        'url name': path_name,
-                        'url': path,
-                        'url pattern': url_pattern,
-                        'parsed args': parsed_args,
-                        'form class': form_class,
-                        'default form data': data,
-                        'traceback': traceback.format_exc()
-                    }))
-                    return fails
+                        if self.RUN_ONLY_THESE_URL_NAMES and path_name not in self.RUN_ONLY_THESE_URL_NAMES:
+                            continue
 
-                if not view_model:
-                    return fails
+                        if path_name.endswith(tuple(self.IGNORE_URL_NAMES_CONTAINING)) or path_name.startswith(tuple(self.IGNORE_URL_NAMES_CONTAINING)):
+                            continue
 
-                form_kwargs['data'] = query_dict_data
-                obj_count_before = 0
+                        tested.append(path_params)
+                        url_pattern = path_params["url_pattern"]
+                        args = re.findall(r'<([:\w]+)>', url_pattern)
+                        params_maps = self.url_params_map.get(path_name, {'default': {}})
 
-                if issubclass(view_class, (CreateView, UpdateView, DeleteView)):
-                    obj_count_before = view_model.objects.all().count()
+                        for map_name, params_map in params_maps.items():
+                            parsed_args = params_map.get('args', [])
+                            view_class = path_params['view_class']
 
-                try:
-                    response = self.client.post(path=path, data=form_kwargs['data'], follow=True)
-                    self.assertEqual(response.status_code, 200)
-                except ValidationError as e:
-                    if e.message == ugettext_lazy('ManagementForm data is missing or has been tampered with'):
-                        post_data = QueryDict('', mutable=True)
+                            if args and not parsed_args:
+                                params_map['parsed'] = []
+                                # parse args from path params
+                                view_model = view_class.model if hasattr(view_class, 'model') else None
 
-                        try:
-                            post_data.update(self.create_formset_post_data(get_response, data))
-                        except Exception as e:
-                            fails.append(OrderedDict({
-                                'location': 'POST GENERATING FORMSET DATA',
-                                'url name': path_name,
-                                'url': path,
-                                'url pattern': url_pattern,
-                                'parsed args': parsed_args,
-                                'form class': form_class,
-                                'default form data': data,
-                                'post data': post_data,
-                                'traceback': traceback.format_exc()
-                            }))
-                            return fails
+                                if view_model is None:
+                                    matching_models = [model for model in models if
+                                                       path_name.split(':')[-1].startswith(model._meta.label_lower.split(".")[-1])]
 
-                        try:
-                            response = self.client.post(path=path, data=post_data, follow=True)
-                            self.assertEqual(response.status_code, 200)
-                        except Exception as e:
-                            fails.append(OrderedDict({
-                                'location': 'POST FORMSET',
-                                'url name': path_name,
-                                'url': path,
-                                'url pattern': url_pattern,
-                                'parsed args': parsed_args,
-                                'form class': form_class,
-                                'data': form_kwargs['data'],
-                                'post data': post_data,
-                                'form': form,
-                                'traceback': traceback.format_exc()
-                            }))
-                            return fails
+                                    if len(matching_models) == 1:
+                                        view_model = matching_models[0]
+
+                                for arg in args:
+                                    matching_fields = []
+
+                                    if arg in ['int:pk', 'pk']:
+                                        matching_fields = [('pk', view_model)]
+                                    else:
+                                        type, name = arg.split(':') if ':' in arg else ('int', arg)
+
+                                        if type not in ['int', 'str']:
+                                            failed.append(OrderedDict({
+                                                'location': 'URL ARG TYPE',
+                                                'url name': path_name,
+                                                'url': path,
+                                                'url pattern': url_pattern,
+                                                'arg': arg,
+                                                'traceback': 'Cant handle this arg type'
+                                            }))
+                                            if raise_every_time:
+                                                self.print_last_fail(failed)
+                                                raise
+                                            continue
+
+                                        if name.endswith('_pk'):
+                                            matching_fields = [('pk', model) for model in models if
+                                                               name == '{}_pk'.format(model._meta.label_lower.split(".")[-1])]
+                                        else:
+                                            # full name and type match
+                                            matching_fields = [(field, model) for field, model in fields if
+                                                               field.name == name and isinstance(field,
+                                                                                                 IntegerField if type == 'int' else CharField)]
+
+                                            if len(matching_fields) > 1:
+                                                # match field  model
+                                                matching_fields = [(field, model) for field, model in matching_fields if
+                                                                   model == view_model]
+
+                                            elif not matching_fields:
+                                                # match name in form model_field to model and field
+                                                matching_fields = [(field, model) for field, model in fields if
+                                                                   name == '{}_{}'.format(model._meta.label_lower.split(".")[-1], field.name)]
+
+                                                if not matching_fields:
+                                                    # this might make problems as only partial match is made
+                                                    matching_fields = [(p[0], view_model) for p in
+                                                                       inspect.getmembers(view_model,
+                                                                                          lambda o: isinstance(o, property)) if
+                                                                       p[0].startswith(name)]
+
+                                    if len(matching_fields) != 1 or matching_fields[0][1] is None:
+                                        failed.append(OrderedDict({
+                                            'location': 'URL ARG MATCH',
+                                            'url name': path_name,
+                                            'url': path,
+                                            'url pattern': url_pattern,
+                                            'arg': arg,
+                                            'matching fields': matching_fields,
+                                            'traceback': 'Url arg mathcing failed'
+                                        }))
+                                        if raise_every_time:
+                                            self.print_last_fail(failed)
+                                            raise
+                                        continue
+
+                                    attr_name, model = matching_fields[0]
+
+                                    if not isinstance(attr_name, str):
+                                        # its Field object
+                                        attr_name = attr_name.name
+
+                                    obj = self.get_generated_obj(model)
+
+                                    if obj is None:
+                                        obj = self.generate_model_objs(model)
+
+                                    obj = self.get_generated_obj(model)
+                                    arg_value = getattr(obj, attr_name, None)
+
+                                    if arg_value is None:
+                                        failed.append(OrderedDict({
+                                            'location': 'URL ARG PARSE',
+                                            'url name': path_name,
+                                            'url': path,
+                                            'url pattern': url_pattern,
+                                            'arg': arg,
+                                            'parsed arg': arg_value,
+                                            'traceback': 'Url arg parsing failed'
+                                        }))
+                                        if raise_every_time:
+                                            self.print_last_fail(failed)
+                                            raise
+                                        continue
+
+                                    parsed_args.append(arg_value)
+                                    params_map['parsed'].append({'obj': obj, 'attr_name': attr_name, 'value': arg_value})
+
+                            if len(args) != len(parsed_args):
+                                failed.append(OrderedDict({
+                                    'location': 'URL ARGS PARSED',
+                                    'url name': path_name,
+                                    'url': path,
+                                    'url pattern': url_pattern,
+                                    'args': args,
+                                    'parsed args': parsed_args,
+                                    'traceback': 'Url args parsing failed'
+                                }))
+                                if raise_every_time:
+                                    self.print_last_fail(failed)
+                                    raise
+                                continue
+
+                            path = reverse(path_name, args=parsed_args, kwargs=params_map.get('kwargs', {}))
+                            data = params_map.get('data', {})
+
+                            # GET url
+                            if not path_name in self.POST_ONLY_URLS:
+                                try:
+                                    get_response = self.client.get(path=path, data=data, follow=True)
+                                    self.assertEqual(get_response.status_code, 200)
+                                except Exception as e:
+                                    failed.append(OrderedDict({
+                                        'location': 'GET',
+                                        'url name': path_name,
+                                        'url': path,
+                                        'url pattern': url_pattern,
+                                        'parsed args': parsed_args,
+                                        'view class': view_class,
+                                        'traceback': traceback.format_exc()
+                                    }))
+                                    if raise_every_time:
+                                        self.print_last_fail(failed)
+                                        raise
+                                    continue
+
+                                if hasattr(view_class, 'sorting_options'):  # and isinstance(view_class.sorting_options, dict):
+                                    for sorting, label in view_class.sorting_options.items():
+                                        data['sorting'] = sorting
+
+                                        try:
+                                            response = self.client.get(path=path, data=data, follow=True)
+                                            self.assertEqual(response.status_code, 200)
+                                        except Exception as e:
+                                            failed.append(OrderedDict({
+                                                'location': 'SORTING',
+                                                'url name': path_name,
+                                                'url': path,
+                                                'url pattern': url_pattern,
+                                                'parsed args': parsed_args,
+                                                'data': data,
+                                                'traceback': traceback.format_exc()
+                                            }))
+                                            if raise_every_time:
+                                                self.print_last_fail(failed)
+                                                raise
+
+
+                                if hasattr(view_class, 'displays'):
+                                    # self.check_display_options(view, path, params)
+                                    for display in view_class.displays:
+                                        data['display'] = display
+
+                                        try:
+                                            response = self.client.get(path=path, data=data, follow=True)
+                                            self.assertEqual(response.status_code, 200)
+                                        except Exception as e:
+                                            failed.append(OrderedDict({
+                                                'location': 'DISPLAY',
+                                                'url name': path_name,
+                                                'url': path,
+                                                'url pattern': url_pattern,
+                                                'parsed args': parsed_args,
+                                                'data': data,
+                                                'traceback': traceback.format_exc()
+                                            }))
+                                            if raise_every_time:
+                                                self.print_last_fail(failed)
+                                                raise
+                                        else:
+                                            if hasattr(response, 'template_name'):
+                                                template = response.template_name[-1] if isinstance(response.template_name,
+                                                                                                    list) else response.template_name
+
+                                                try:
+                                                    self.assertTrue(template.endswith('{}.html'.format(display)))
+                                                except Exception as e:
+                                                    failed.append(OrderedDict({
+                                                        'location': 'TEMPLATE',
+                                                        'url name': path_name,
+                                                        'url': path,
+                                                        'url pattern': url_pattern,
+                                                        'parsed args': parsed_args,
+                                                        'data': data,
+                                                        'template': template,
+                                                        'traceback': traceback.format_exc()
+                                                    }))
+                                                    if raise_every_time:
+                                                        self.print_last_fail(failed)
+                                                        raise
+
+                            # POST url
+                            if getattr(view_class, 'form_class', None):
+                                form_class = view_class.form_class
+                                form_kwargs = params_map.get('form_kwargs', self.generate_func_args(form_class.__init__))
+                                form_kwargs = {key: value(self) if callable(value) else value for key,value in form_kwargs.items()}
+                                form_kwargs['data'] = data
+                                init_form_kwargs = self.init_form_kwargs(form_class)
+                                form = None
+
+                                try:
+                                    form = form_class(**init_form_kwargs)
+                                except Exception as e:
+                                    if not isinstance(form, form_class) or not hasattr(form, 'fields'):
+                                        # as long as there is form instance with fields its enough to generate data
+                                        failed.append(OrderedDict({
+                                            'location': 'POST FORM INIT',
+                                            'url name': path_name,
+                                            'url': path,
+                                            'url pattern': url_pattern,
+                                            'parsed args': parsed_args,
+                                            'form class': form_class,
+                                            'form kwargs': init_form_kwargs,
+                                            'traceback': traceback.format_exc()
+                                        }))
+                                        if raise_every_time:
+                                            self.print_last_fail(failed)
+                                            raise
+                                        continue
+
+                                query_dict_data = QueryDict('', mutable=True)
+
+                                try:
+                                    query_dict_data.update(self.generate_form_data(form, data))
+                                except Exception as e:
+                                    failed.append(OrderedDict({
+                                        'location': 'POST GENERATING FORM DATA',
+                                        'url name': path_name,
+                                        'url': path,
+                                        'url pattern': url_pattern,
+                                        'parsed args': parsed_args,
+                                        'form class': form_class,
+                                        'default form data': data,
+                                        'traceback': traceback.format_exc()
+                                    }))
+
+                                    if raise_every_time:
+                                        self.print_last_fail(failed)
+                                        raise
+                                    continue
+
+                                form_kwargs['data'] = query_dict_data
+                                obj_count_before = 0
+
+                                if issubclass(view_class, (CreateView, UpdateView, DeleteView)):
+                                    obj_count_before = view_class.model.objects.all().count()
+
+                                try:
+                                    response = self.client.post(path=path, data=form_kwargs['data'], follow=True)
+                                    self.assertEqual(response.status_code, 200)
+                                except ValidationError as e:
+                                    if e.message == 'ManagementForm data is missing or has been tampered with':
+                                        post_data = None
+
+                                        try:
+                                            post_data = self.create_formset_post_data(get_response, form_kwargs['data'], form_kwargs.get('formset_data', []))
+                                            response = self.client.post(path=path, data=post_data, follow=True)
+                                            self.assertEqual(response.status_code, 200)
+                                        except Exception as e:
+                                            failed.append(OrderedDict({
+                                                'location': 'POST FORMSET',
+                                                'url name': path_name,
+                                                'url': path,
+                                                'url pattern': url_pattern,
+                                                'parsed args': parsed_args,
+                                                'form class': form_class,
+                                                'data': form_kwargs['data'],
+                                                'post data': post_data,
+                                                'form': form,
+                                                'traceback': traceback.format_exc()
+                                            }))
+                                            if raise_every_time:
+                                                self.print_last_fail(failed)
+                                                raise
+                                            continue
+                                    else:
+                                        raise
+                                except Exception as e:
+                                    failed.append(OrderedDict({
+                                        'location': 'POST',
+                                        'url name': path_name,
+                                        'url': path,
+                                        'url pattern': url_pattern,
+                                        'parsed args': parsed_args,
+                                        'form class': form_class,
+                                        'data': form_kwargs['data'],
+                                        'form': form,
+                                        'traceback': traceback.format_exc()
+                                    }))
+                                    if raise_every_time:
+                                        self.print_last_fail(failed)
+                                        raise
+                                    continue
+
+
+
+                                if issubclass(view_class, (CreateView, UpdateView, DeleteView)):
+                                    obj_count_after = view_class.model.objects.all().count()
+
+                                    try:
+                                        if issubclass(view_class, CreateView):
+                                            self.assertEqual(obj_count_after, obj_count_before + 1)
+                                        elif issubclass(view_class, UpdateView):
+                                            self.assertEqual(obj_count_after, obj_count_before)
+                                        elif issubclass(view_class, DeleteView):
+                                            self.assertEqual(obj_count_after, obj_count_before - 1)
+                                            # recreate obj
+                                            self.generate_model_objs(view_class.model)
+
+                                    except Exception as e:
+                                        # for key, value in init_form_kwargs.items():
+                                        #     if key not in form_kwargs:
+                                        #         form_kwargs[key] = value
+
+                                        # form = form_class(**form_kwargs)
+                                        form = response.context_data.get('form', None)
+
+                                        failed.append(OrderedDict({
+                                            'location': 'POST COUNT',
+                                            'url name': path_name,
+                                            'url': path,
+                                            'url pattern': url_pattern,
+                                            'parsed args': parsed_args,
+                                            'view model': view_class.model,
+                                            'form': form,
+                                            'form valid': form.is_valid() if form else None,
+                                            'form errors': form.errors if form else None,
+                                            'data': form_kwargs['data'],
+                                            'traceback': traceback.format_exc()
+                                        }))
+                                        if raise_every_time:
+                                            self.print_last_fail(failed)
+                                            raise
+
+
+
+                if failed:
+                    # append failed count at the end of error list
+                    failed.append('{}/{} urls FAILED'.format(len(failed), len(tested)))
+
+                self.assertFalse(failed, msg=pformat(failed, indent=4))
+        except:
+            if not raise_every_time:
+                for i, f in enumerate(reversed(failed)):
+                    print('\n')
+                    print(i)
+                    if isinstance(f, (OrderedDict, dict)):
+                        for k, v in f.items():
+                            print(k)
+                            print(v)
                     else:
-                        fails.append(OrderedDict({
-                            'location': 'POST',
-                            'url name': path_name,
-                            'url': path,
-                            'url pattern': url_pattern,
-                            'parsed args': parsed_args,
-                            'form class': form_class,
-                            'data': form_kwargs['data'],
-                            'form': form,
-                            'traceback': traceback.format_exc()
-                        }))
-                        return fails
-
-                except Exception as e:
-                    fails.append(OrderedDict({
-                        'location': 'POST',
-                        'url name': path_name,
-                        'url': path,
-                        'url pattern': url_pattern,
-                        'parsed args': parsed_args,
-                        'form class': form_class,
-                        'data': form_kwargs['data'],
-                        'form': form,
-                        'traceback': traceback.format_exc()
-                    }))
-                    return fails
-
-                if issubclass(view_class, (CreateView, UpdateView, DeleteView)):
-                    obj_count_after = view_model.objects.all().count()
-
-                    try:
-                        if issubclass(view_class, CreateView):
-                            self.assertEqual(obj_count_after, obj_count_before + 1)
-                        elif issubclass(view_class, UpdateView):
-                            self.assertEqual(obj_count_after, obj_count_before)
-                        elif issubclass(view_class, DeleteView):
-                            self.assertEqual(obj_count_after, obj_count_before - 1)
-                            # recreate obj is not necessary because of transaction rollback
-
-                    except Exception as e:
-                        # for key, value in init_form_kwargs.items():
-                        #     if key not in form_kwargs:
-                        #         form_kwargs[key] = value
-
-                        # form = form_class(**form_kwargs)
-                        form = response.context_data.get('form', None)
-                        errors = [form.errors if form else None]
-                        is_valid = [form.is_valid() if form else None]
-                        formset_keys = [key for key in response.context.keys() if 'formset' in key and response.context[key]]
-
-                        for formset_key in formset_keys:
-                            formset = response.context[formset_key]
-                            is_valid.append((formset_key, formset.is_valid()))
-
-                            for extra_form in formset.forms:
-                                errors.append(extra_form.errors)
-
-                        fails.append(OrderedDict({
-                            'location': 'POST COUNT',
-                            'url name': path_name,
-                            'url': path,
-                            'url pattern': url_pattern,
-                            'parsed args': parsed_args,
-                            'view model': view_class.model,
-                            'form class': form_class,
-                            # 'form': form,
-                            'form valid': is_valid,
-                            'form errors': errors,
-                            'data': form_kwargs['data'],
-                            'traceback': traceback.format_exc()
-                        }))
-                        return fails
-
-                # rollback post action
-                raise IntegrityError('No problem')
-
-        except IntegrityError as e:
-            if e.args[0] != 'No problem':
-                raise
-        except Exception:
+                        print(f)
+                if failed:
+                    print(failed[-1])
             raise
 
-        return fails
-
-    def test_urls(self):
-        models = self.get_models()
-        fields = [(f, model) for model in models for f in model._meta.get_fields() if f.concrete and not f.auto_created]
-        failed = []
-        tested = []
-        for module_name, module_params in self.get_url_views_by_module().items():
-            for path_params in module_params:
-                # print(path_params)
-                path = path_name = path_params['path_name']
-
-                namespace, fails = self.get_namespace(path_params, module_name)
-
-                if fails:
-                    failed.extend(fails)
-                    continue
-
-                path = path_name = '{}:{}'.format(namespace, path_name) if namespace else path_params['path_name']
-
-                if self.skip_url(path_name):
-                    continue
-
-                print(path_params)
-                tested.append(path_params)
-                url_pattern = path_params["url_pattern"]
-                view_class = path_params['view_class']
-                params_maps = self.url_params_map.get(path_name, {'default': {}})
-
-                for map_name, params_map in params_maps.items():
-                    parsed_args = params_map.get('args', None)
-                    args = re.findall(r'<([:\w]+)>', url_pattern)
-                    path_params['args'] = args
-
-                    if len(params_maps) > 1 and parsed_args is not None and len(args) != len(parsed_args):
-                        # when there are mmultiple params maps provided match by arguments length
-                        continue
-
-                    path, parsed_args, fails = self.prepare_url(path_name, path_params, params_map, models, fields)
-
-                    if fails:
-                        failed.extend(fails)
-                        continue
-
-                    # set cookies
-                    cookies = params_map.get('cookies', None)
-
-                    if cookies is not None:
-                        initial_cookies = self.client.cookies
-                        self.client.cookies.load(cookies)
-
-                    # GET url
-                    if not path_name in self.POST_ONLY_URLS:
-                        get_response, fails = self.get_url_test(path_name, path, parsed_args, url_pattern, view_class, params_map)
-
-                        if fails:
-                            failed.extend(fails)
-                            continue
-
-                    # POST url
-                    if path_name not in self.GET_ONLY_URLS and getattr(view_class, 'form_class', None):
-                        fails = self.post_url_test(path_name, path, parsed_args, url_pattern, view_class, params_map, get_response)
-
-                        if fails:
-                            failed.extend(fails)
-                            continue
-
-                    # reset cookies
-                    if cookies is not None:
-                        self.client.cookies = initial_cookies
-
-        if failed:
-            # append failed count at the end of error list
-            failed.append('{}/{} urls FAILED: {}'.format(len(failed), len(tested), ', '.join([f['url name'] for f in failed])))
-
-        self.assertFalse(failed, msg=pformat(failed, indent=4))
-
     def test_querysets(self):
-        models_querysets = [model._default_manager.all() for model in self.get_models()]
-        failed = []
+        try:
+            with transaction.atomic():
 
-        for qs in models_querysets:
-            qs_class = qs.__class__
+                models_querysets = [model.objects.all() for model in self.get_models()]
+                failed = []
 
-            if not qs_class == QuerySet:
-                qs_class_label = qs_class.__name__
-                queryset_methods = [(name, func) for name, func in qs_class.__dict__.items()
-                                    if not name.startswith('_')
-                                    and name != 'mro'
-                                    and inspect.isfunction(func)]
+                for qs in models_querysets:
+                    qs_class = qs.__class__
 
-                params_map = self.queryset_params_map.get(qs_class, {})
+                    if not qs_class == QuerySet:
+                        qs_class_label = qs_class.__name__
+                        queryset_methods = [(name, func) for name, func in qs_class.__dict__.items()
+                                            if not name.startswith('_')
+                                            and name != 'mro'
+                                            and inspect.isfunction(func)]
 
-                for name, func in queryset_methods:
-                    print('{}.{}'.format(qs_class_label, name))
-                    result = None
-                    kwargs = {}
+                        params_map = self.queryset_params_map().get(qs_class, {})
 
-                    if name in params_map:
-                        # provided arguments
-                        kwargs = params_map[name]
+                        for name, func in queryset_methods:
+                            print('{}.{}'.format(qs_class_label, name))
+                            result = None
+                            kwargs = {}
 
-                        try:
-                            result = getattr(qs, name)(**kwargs)
-                        except Exception as e:
-                            failed.append([{
-                                'location': 'DEFAULT KWARGS',
-                                'model': qs.model,
-                                'queryset method': '{}.{}'.format(qs_class_label, name),
-                                'kwargs': kwargs,
-                                'traceback': traceback.format_exc(),
-                            }])
-                    elif func.__code__.co_argcount == 1:
-                        # no arguments except self
-                        try:
-                            result = getattr(qs, name)()
-                        except Exception as e:
-                            failed.append([{
-                                'location': 'NO KWARGS',
-                                'model': qs.model,
-                                'queryset method': '{}.{}'.format(qs_class_label, name),
-                                'traceback': traceback.format_exc(),
-                            }])
-                    else:
-                        func = getattr(qs, name)
+                            if name in params_map:
+                                # provided arguments
+                                kwargs = params_map[name]
 
-                        try:
-                            kwargs = self.generate_func_args(func)
-                        except Exception as e:
-                            failed.append([{
-                                'location': 'GENERATING KWARGS',
-                                'model': qs.model,
-                                'queryset method': '{}.{}'.format(qs_class_label, name),
-                                'traceback': traceback.format_exc(),
-                            }])
-                        else:
-                            try:
-                                result = getattr(qs, name)(**kwargs)
-                            except Exception as e:
-                                failed.append([{
-                                    'location': 'GENERATED KWARGS',
-                                    'model': qs.model,
-                                    'queryset method': '{}.{}'.format(qs_class_label, name),
-                                    'kwargs': kwargs,
-                                    'traceback': traceback.format_exc(),
-                                }])
+                                try:
+                                    result = getattr(qs, name)(**kwargs)
+                                except Exception as e:
+                                    failed.append([{
+                                        'location': 'DEFAULT KWARGS',
+                                        'queryset method': '{}.{}'.format(qs_class_label, name),
+                                        'kwargs': kwargs,
+                                        'traceback': traceback.format_exc(),
+                                    }])
+                            elif func.__code__.co_argcount == 1:
+                                # no arguments except self
+                                try:
+                                    result = getattr(qs, name)()
+                                except Exception as e:
+                                    failed.append([{
+                                        'location': 'NO KWARGS',
+                                        'queryset method': '{}.{}'.format(qs_class_label, name),
+                                        'traceback': traceback.format_exc(),
+                                    }])
+                            else:
+                                func = getattr(qs, name)
 
-        if failed:
-            failed.append('{} qeuryset methods FAILED'.format(len(failed)))
+                                try:
+                                    kwargs = self.generate_func_args(func)
+                                except Exception as e:
+                                    failed.append([{
+                                        'location': 'GENERATING KWARGS',
+                                        'queryset method': '{}.{}'.format(qs_class_label, name),
+                                        'traceback': traceback.format_exc(),
+                                    }])
+                                else:
+                                    try:
+                                        result = getattr(qs, name)(**kwargs)
+                                    except Exception as e:
+                                        failed.append([{
+                                            'location': 'GENERATED KWARGS',
+                                            'queryset method': '{}.{}'.format(qs_class_label, name),
+                                            'kwargs': kwargs,
+                                            'traceback': traceback.format_exc(),
+                                        }])
 
-        self.assertFalse(failed, msg=pformat(failed, indent=4))
+                if failed:
+                    failed.append('{} qeuryset methods FAILED'.format(len(failed)))
+
+                self.assertFalse(failed, msg=pformat(failed, indent=4))
+        except:
+            # raise Exception(pformat(failed, indent=4))
+            raise
 
     def test_filters(self):
+        raise_every_time = self.RAISE_EVERY_TIME
+
         module_names = self.get_submodule_names(self.CHECK_MODULES, ['filters', 'forms'], self.EXCLUDE_MODULES)
         filter_classes = set()
         failed = []
@@ -1686,7 +1308,6 @@ class GenericTestMixin(object):
         # get filter classes
         for module_name in module_names:
             module = sys.modules[module_name]
-
             filter_classes |= {
                 cls for cls in self.get_module_classes(module) if issubclass(cls, (FilterSet,))
             }
@@ -1694,67 +1315,53 @@ class GenericTestMixin(object):
         filter_classes = sorted(filter_classes, key=lambda x: x.__name__)
 
         for i, filter_class in enumerate(filter_classes):
-            print(filter_class)
-            params_maps = self.filter_params_map.get(filter_class, {'default': {}})
+            params_map = self.filter_params_map.get(filter_class, {})
+            init_kwargs = self.init_filter_kwargs(filter_class, default=params_map.get('init_kwargs', {}))
+            filter = filter_class(**init_kwargs)
+            query_dict_data = QueryDict('', mutable=True)
 
-            for map_name, params_map in params_maps.items():
-                init_kwargs = self.init_filter_kwargs(filter_class, default=params_map.get('init_kwargs', {}))
+            try:
+                query_dict_data.update(self.generate_form_data(filter.form, params_map.get('data', {})))
+            except:
+                failed.append(OrderedDict({
+                    'location': 'FILTER DATA',
+                    'filter class': filter_class,
+                    'data': query_dict_data,
+                    'params map': params_map,
+                    'traceback': traceback.format_exc()
+                }))
+                if raise_every_time:
+                    self.print_last_fail(failed)
+                    raise
+                continue
 
-                try:
-                    filter = filter_class(**init_kwargs)
-                except:
-                    failed.append(OrderedDict({
-                        'location': 'FILTER INIT',
-                        'filter class': filter_class,
-                        'init_kwargs': init_kwargs,
-                        'params map': params_map,
-                        'traceback': traceback.format_exc()
-                    }))
-                    continue
+            try:
+                queryset = params_map.get('queryset', filter_class._meta.model.objects.all())
+            except Exception as e:
+                failed.append(OrderedDict({
+                    'location': 'FILTER QUERYSET',
+                    'filter class': filter_class,
+                    'params map': params_map,
+                    'traceback': traceback.format_exc()
+                }))
+                if raise_every_time:
+                    self.print_last_fail(failed)
+                    raise
+                continue
 
-                query_dict_data = QueryDict('', mutable=True)
+            try:
+                filter = filter_class(data=query_dict_data, queryset=queryset, **init_kwargs)
+                qs = filter.qs.all().values()
+            except Exception as e:
+                failed.append(OrderedDict({
+                    'location': 'FILTER',
+                    'filter class': filter_class,
+                    'data': query_dict_data,
+                    'params map': params_map,
+                    'traceback': traceback.format_exc()
+                }))
+                if raise_every_time:
+                    self.print_last_fail(failed)
+                    raise
+                continue
 
-                try:
-                    query_dict_data.update(self.generate_form_data(filter.form, params_map.get('data', {})))
-                except:
-                    failed.append(OrderedDict({
-                        'location': 'FILTER DATA',
-                        'filter class': filter_class,
-                        'data': query_dict_data,
-                        'params map': params_map,
-                        'traceback': traceback.format_exc()
-                    }))
-                    continue
-
-                try:
-                    queryset = init_kwargs.get('queryset', filter_class._meta.model._default_manager.all() if filter_class._meta.model else None)
-                except Exception as e:
-                    failed.append(OrderedDict({
-                        'location': 'FILTER QUERYSET',
-                        'filter class': filter_class,
-                        'params map': params_map,
-                        'traceback': traceback.format_exc()
-                    }))
-                    continue
-
-                if queryset:
-                    init_kwargs['queryset'] = queryset
-
-                try:
-                    filter = filter_class(data=query_dict_data, **init_kwargs)
-                    qs = filter.qs.all().values()
-                except Exception as e:
-                    failed.append(OrderedDict({
-                        'location': 'FILTER',
-                        'filter class': filter_class,
-                        'data': query_dict_data,
-                        'queryset': queryset,
-                        'params map': params_map,
-                        'traceback': traceback.format_exc()
-                    }))
-                    continue
-
-        if failed:
-            failed.append('{} filters FAILED'.format(len(failed)))
-
-        self.assertFalse(failed, msg=pformat(failed, indent=4))
