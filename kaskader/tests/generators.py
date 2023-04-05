@@ -381,7 +381,7 @@ class GenericBaseMixin(object):
     @classmethod
     def get_response_view(cls, **kwargs):
         response = cls.get_response(**kwargs)
-        return response.context_data['view']
+        return response.context['view']
 
     @classmethod
     def get_response_view_as_filter_function(cls, **kwargs):
@@ -1362,8 +1362,8 @@ class GenericTestMixin(object):
                 form_kwargs['data'] = data
                 form = None
 
-                if path_name not in self.POST_ONLY_URLS and 'form' in get_response.context_data:
-                    form = get_response.context_data['form']
+                if path_name not in self.POST_ONLY_URLS and 'form' in get_response.context:
+                    form = get_response.context['form']
                 else:
                     init_form_kwargs = self.init_form_kwargs(form_class)
 
@@ -1496,7 +1496,7 @@ class GenericTestMixin(object):
                         #         form_kwargs[key] = value
 
                         # form = form_class(**form_kwargs)
-                        form = response.context_data.get('form', None)
+                        form = response.context.get('form', None)
                         errors = [form.errors if form else None]
                         is_valid = [form.is_valid() if form else None]
                         formset_keys = [key for key in response.context.keys() if 'formset' in key and response.context[key]]
