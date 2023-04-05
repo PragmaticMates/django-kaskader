@@ -40,7 +40,14 @@ from django.http import QueryDict
 from django.test import RequestFactory
 from django.urls import reverse
 from django.utils.timezone import now
-from django.utils.translation import ugettext_lazy
+
+try:
+    # older Django
+    from django.utils.translation import ugettext_lazy as _
+except ImportError:
+    # Django >= 3
+    from django.utils.translation import gettext_lazy as _
+
 from django.views.generic import CreateView, UpdateView, DeleteView
 
 # TODO: refactor: apps below are optional
@@ -374,7 +381,7 @@ class GenericBaseMixin(object):
     @classmethod
     def get_response_view(cls, **kwargs):
         response = cls.get_response(**kwargs)
-        return response.context_data['view']
+        return response.context['view']
 
     @classmethod
     def get_response_view_as_filter_function(cls, **kwargs):
@@ -1355,8 +1362,8 @@ class GenericTestMixin(object):
                 form_kwargs['data'] = data
                 form = None
 
-                if path_name not in self.POST_ONLY_URLS and 'form' in get_response.context_data:
-                    form = get_response.context_data['form']
+                if path_name not in self.POST_ONLY_URLS and 'form' in get_response.context:
+                    form = get_response.context['form']
                 else:
                     init_form_kwargs = self.init_form_kwargs(form_class)
 
@@ -1407,7 +1414,7 @@ class GenericTestMixin(object):
                     response = self.client.post(path=path, data=form_kwargs['data'], follow=True)
                     self.assertEqual(response.status_code, 200)
                 except ValidationError as e:
-                    if e.message == ugettext_lazy('ManagementForm data is missing or has been tampered with'):
+                    if e.message == _('ManagementForm data is missing or has been tampered with'):
                         post_data = QueryDict('', mutable=True)
 
                         try:
@@ -1489,7 +1496,7 @@ class GenericTestMixin(object):
                         #         form_kwargs[key] = value
 
                         # form = form_class(**form_kwargs)
-                        form = response.context_data.get('form', None)
+                        form = response.context.get('form', None)
                         errors = [form.errors if form else None]
                         is_valid = [form.is_valid() if form else None]
                         formset_keys = [key for key in response.context.keys() if 'formset' in key and response.context[key]]
