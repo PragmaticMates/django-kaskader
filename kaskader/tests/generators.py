@@ -381,6 +381,11 @@ class GenericBaseMixin(object):
     @classmethod
     def get_response_view(cls, **kwargs):
         response = cls.get_response(**kwargs)
+        try:
+            return response.context_data['view']
+        except AttributeError:
+            pass
+
         return response.context['view']
 
     @classmethod
