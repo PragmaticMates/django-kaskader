@@ -297,7 +297,10 @@ class MissingTestMixin(GenericBaseMixin):
                     explicit_permissions[permission_name] = {}
 
                 if not any([exclude_name in path for exclude_name in self.EXCLUDE_MODULES]):
-                    tested_permissions[permission_name][path].append(test.__name__)
+                    try:
+                        tested_permissions[permission_name][path].append(test.__name__)
+                    except KeyError:
+                        raise KeyError(f'{permission_name} not found for test {test.__name__}')
 
         failed = []
 
