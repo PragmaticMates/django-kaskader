@@ -112,7 +112,7 @@ class MissingTestMixin(GenericBaseMixin):
                 manager_classes |= self.get_module_classes(module)
 
         # get all manager tests names
-        test_names = {test.__name__.replace('test_', '') for test in self.get_tests_by_module(submodule_name='tests.test_managers') if test.__name__.endswith(('manager', 'queryset'))}
+        test_names = {test.__name__.replace('test_', '') for test in self.get_tests_by_module(submodule_name='tests.test_managers') if test.__name__.endswith(('manager', 'queryset', 'mixin'))}
 
         # get class/method names out of test names
         tested_class_names = {''.join([word.capitalize() for word in test.split('_')]).replace('Queryset', 'QuerySet') for test in test_names}
@@ -161,7 +161,7 @@ class MissingTestMixin(GenericBaseMixin):
                     for cls in test_classes:
                         # get managers testing methods by name
                         tests = [func for func in cls.__dict__.keys() if
-                                 callable(getattr(cls, func)) and func.startswith("test_") and func.endswith(('manager'))]
+                                 callable(getattr(cls, func)) and func.startswith("test_") and func.endswith(('manager', 'mixin'))]
 
                         # convert test methods names to manager/queryset clasess: test_name_of_manager -> NameOfManager, test_name_of_queryset -> NameOfQuerySet
                         tested_managers = {
