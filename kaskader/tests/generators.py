@@ -1259,9 +1259,7 @@ class GenericTestMixin(object):
             # print('SKIP')
             return True
 
-        if self.RUN_ONLY_URL_NAMES_CONTAINING and not url_name.endswith(
-                tuple(self.RUN_ONLY_URL_NAMES_CONTAINING)) and not url_name.startswith(
-                tuple(self.RUN_ONLY_URL_NAMES_CONTAINING)):
+        if self.RUN_ONLY_URL_NAMES_CONTAINING and not any((substr in url_name for substr in self.RUN_ONLY_URL_NAMES_CONTAINING)):
             # print('SKIP')
             return True
 
