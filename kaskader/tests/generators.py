@@ -911,7 +911,8 @@ class GenericBaseMixin(object):
 
     @classmethod
     def next_id(cls, model):
-        return model.objects.order_by('id').last().id + 1 if model.objects.exists() else 0
+        last = model.objects.order_by('id').last()
+        return last.id + 1 if last else 0
 
     @classmethod
     def get_pdf_file_mock(cls, name='test.pdf'):
