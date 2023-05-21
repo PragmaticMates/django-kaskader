@@ -1003,20 +1003,28 @@ class GenericBaseMixin(object):
         return {}
 
     @classmethod
-    def init_form_kwargs(cls, form_class, default={}):
+    def init_form_kwargs(cls, form_class, default=None):
+
         '''{
             UserForm: {'user': cls.get_generated_obj(User)},
         }
         '''
-        return {}.get(form_class, cls.generate_func_args(form_class.__init__, default))
+        if default is None:
+            default = {}
+
+        return {}.get(form_class, cls.generate_func_args(form_class.__init__, default=default))
 
     @classmethod
-    def init_filter_kwargs(cls, filter_class, default={}):
+    def init_filter_kwargs(cls, filter_class, default=None):
         '''{
             UserFitler: {'queryset': User.objects.all()}
         }
         '''
+        if default is None:
+            default = {}
+
         return {}.get(filter_class, cls.generate_func_args(filter_class.__init__, default=default))
+
 
     @classmethod
     def setUpTestData(cls):
@@ -1369,7 +1377,7 @@ class GenericTestMixin(object):
                 if path_name not in self.POST_ONLY_URLS and 'form' in get_response.context:
                     form = get_response.context['form']
                 else:
-                    init_form_kwargs = self.init_form_kwargs(form_class)
+                    init_form_kwargs = self.init_form_kwargs(form_class, default=params_map.get('init_form_kwargs', {}))
 
                     try:
                         form = form_class(**init_form_kwargs)
