@@ -185,7 +185,7 @@ class GenericBaseMixin(object):
         field values by form field class used to generate form values, values can be callables with field variable,
         extend in subclass as needed
         '''
-        return {
+        map = {
             django_filter_fields.ModelChoiceField: lambda f: f.queryset.first().id,
             django_filter_fields.ModelMultipleChoiceField: lambda f: f.queryset.first().id,
             django_filter_fields.MultipleChoiceField: lambda f: [list(f.choices)[-1][0]] if f.choices else ['{}'.format(f.label)],
@@ -224,6 +224,14 @@ class GenericBaseMixin(object):
             if_iban.IBANFormField: 'LU28 0019 4006 4475 0000',
             if_vat.VATNumberFormField: lambda f: 'LU{}'.format(random.randint(10000000, 99999999)),  # 'GB904447273',
         }
+
+        try:
+            map.update({django_form_fields.JSONField: ''})
+        except ImportError:
+            # older django
+            pass
+
+        return map
 
     @classmethod
     def import_modules_if_needed(cls):
