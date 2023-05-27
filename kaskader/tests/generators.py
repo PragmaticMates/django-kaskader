@@ -335,12 +335,12 @@ class GenericBaseMixin(object):
             if eval_args:
                 args = [ast.literal_eval(arg) for arg in funccall.args if arg.id != '*args']
             else:
-                args = [arg.elts if isinstance(arg, ast.List) else arg.id for arg in funccall.args if isinstance(arg, ast.List) or ast.unparse(arg) != '*args']
+                args = [arg.elts if isinstance(arg, ast.List) else arg.id for arg in funccall.args if isinstance(arg, ast.List) or arg.id != '*args']
 
             if eval_kwargs:
                 kwargs = {arg.arg: ast.literal_eval(arg.value) for arg in funccall.keywords if arg.arg is not None}
             else:
-                kwargs = {arg.arg: arg.value.attr if isinstance(arg.value, ast.Attribute) else arg.value.s if isinstance(arg.value, ast.Str) else arg.value.id  for arg in funccall.keywords if arg.arg is not None}
+                kwargs = {arg.arg: arg.value.attr if isinstance(arg.value, ast.Attribute) else arg.value.s if isinstance(arg.value, ast.Str) else arg.value.id for arg in funccall.keywords if arg.arg is not None}
 
         return args, kwargs
 
