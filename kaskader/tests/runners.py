@@ -30,7 +30,7 @@ class ExtensionDiscoverRunner(DiscoverRunner):
         else:
             get_hstore_oids.cache_clear()
 
-        result = super().setup_databases(**kwargs)
+        result = super(ExtensionDiscoverRunner, self).setup_databases(**kwargs)
 
         connection = connections[DEFAULT_DB_ALIAS]
         cursor = connection.cursor()
