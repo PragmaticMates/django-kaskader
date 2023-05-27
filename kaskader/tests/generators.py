@@ -209,7 +209,6 @@ class GenericBaseMixin(object):
             django_form_fields.MultipleChoiceField: lambda f: [list(f.choices)[-1][0]] if f.choices else ['{}'.format(f.label)],
             django_form_fields.URLField: lambda f: 'www.google.com',
             django_form_fields.DurationField: 1,
-            django_form_fields.JSONField: '',
             django_form_fields.SplitDateTimeField: lambda f: [now().date(), now().time()],
             django_form_fields.GenericIPAddressField: '127.0.0.1',
             django_form_fields.FloatField: lambda f: cls.get_num_field_mock_value(f),
