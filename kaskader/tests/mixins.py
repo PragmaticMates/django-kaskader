@@ -137,7 +137,7 @@ class UrlTestMixin(object):
 
             if hasattr(response, 'template_name'):
                 template = response.template_name[-1] if isinstance(response.template_name, list) else response.template_name
-                self.assertTrue(template.endswith(f'{display}.html'))
+                self.assertTrue(template.endswith('{}.html'.format(display)))
 
     def iterate_post_urls(self, url_params, data, delete_last=None, change_data=None):
         index = 0
@@ -165,7 +165,7 @@ class UrlTestMixin(object):
                             if isinstance(data[field], (datetime, date)):
                                 data[field] += timedelta(days=index)
                             elif field == 'email':
-                                data[field] = f'{time()}@example.com'
+                                data[field] = '{}@example.com'.format(time())
                             elif isinstance(data[field], str):
                                 data[field] += str(index)
                             elif isinstance(data[field], int) and field =='month':
@@ -252,7 +252,7 @@ class FilterTestMixin(object):
         missing_fields = filter_fields ^ tested_fields
 
         self.assertEqual(filter_fields, tested_fields)
-        self.assertEqual(len(filter.errors), 0, f'Filter errors: {filter.errors}')
+        self.assertEqual(len(filter.errors), 0, 'Filter errors: {}'.format(filter.errors))
 
         qs = filter.qs.all()
         for obj in objs_to_find:
@@ -290,7 +290,7 @@ class FilterTestMixin(object):
 
             if value in values_when_find:
                 for obj in objs_to_find:
-                    self.assertIn(obj, filtered_qs, f'filter value: {value}, object attribute value: {attr_val}')
+                    self.assertIn(obj, filtered_qs, 'filter value: {}, object attribute value: {}'.format(value, attr_val))
                 for obj in objs_not_to_find:
                     self.assertNotIn(obj, filtered_qs, value)
             else:

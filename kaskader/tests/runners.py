@@ -32,7 +32,7 @@ class ExtensionDiscoverRunner(DiscoverRunner):
         cursor = connection.cursor()
 
         for extension in self.DB_EXTENSIONS:
-            cursor.execute(f'CREATE EXTENSION IF NOT EXISTS {extension}')
+            cursor.execute('CREATE EXTENSION IF NOT EXISTS {}'.format(extension))
 
         return result
 
