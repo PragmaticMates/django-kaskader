@@ -216,9 +216,6 @@ class GenericBaseMixin(object):
             postgres_forms.HStoreField: '',
             postgres_forms.SimpleArrayField: lambda f: [cls.default_form_field_map()[f.base_field.__class__](f.base_field)],
             postgres_forms.DateTimeRangeField: lambda f: [now().strftime(list(f.input_formats)[-1]) if hasattr(f, 'input_formats') else now(), now().strftime(list(f.input_formats)[-1]) if hasattr(f, 'input_formats') else now()],
-            pragmatic_fields.AlwaysValidChoiceField: lambda f: list(f.choices)[-1][0] if f.choices else '{}'.format(f.label),
-            pragmatic_fields.AlwaysValidMultipleChoiceField: lambda f: str(list(f.choices)[-1][0]) if f.choices else str(f.label),
-            pragmatic_fields.SliderField: lambda f: '{},{}'.format(f.min, f.max) if f.has_range else str(f.min),
             if_countries.CountryFormField: 'LU',  # random.choice(UN_RECOGNIZED_COUNTRIES),
             if_iban.IBANFormField: 'LU28 0019 4006 4475 0000',
             if_vat.VATNumberFormField: lambda f: 'LU{}'.format(random.randint(10000000, 99999999)),  # 'GB904447273',
@@ -226,9 +223,20 @@ class GenericBaseMixin(object):
 
         try:
             map.update({django_form_fields.JSONField: ''})
-        except ImportError:
+        except AttributeError:
             # older django
             pass
+
+        try:
+            map.update({
+                pragmatic_fields.AlwaysValidChoiceField: lambda f: list(f.choices)[-1][0] if f.choices else '{}'.format(f.label),
+                pragmatic_fields.AlwaysValidMultipleChoiceField: lambda f: str(list(f.choices)[-1][0]) if f.choices else str(f.label),
+                pragmatic_fields.SliderField: lambda f: '{},{}'.format(f.min, f.max) if f.has_range else str(f.min),
+            })
+        except AttributeError:
+            # older django
+            pass
+
 
         return map
 
@@ -1530,10 +1538,12 @@ class GenericTestMixin(object):
 
                         for formset_key in formset_keys:
                             formset = response.context[formset_key]
-                            is_valid.append((formset_key, formset.is_valid()))
 
-                            for extra_form in formset.forms:
-                                errors.append(extra_form.errors)
+                            if hasattr(formset, 'is_valid'):
+                                is_valid.append((formset_key, formset.is_valid()))
+
+                                for extra_form in formset.forms:
+                                    errors.append(extra_form.errors)
 
                         fails.append(OrderedDict({
                             'location': 'POST COUNT',
