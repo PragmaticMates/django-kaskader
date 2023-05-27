@@ -31,7 +31,7 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import transaction, IntegrityError
 from django.db.models import NOT_PROVIDED, BooleanField, TextField, CharField, SlugField, EmailField, DateTimeField, \
     DateField, FileField, PositiveSmallIntegerField, DecimalField, IntegerField, QuerySet, PositiveIntegerField, \
-    SmallIntegerField, BigIntegerField, FloatField, ImageField, GenericIPAddressField, JSONField, URLField
+    SmallIntegerField, BigIntegerField, FloatField, ImageField, GenericIPAddressField, URLField
 from django.db.models.fields.related import RelatedField, ManyToManyField, ForeignKey, OneToOneField
 from django_filters import fields as django_filter_fields, FilterSet
 from django.forms import fields as django_form_fields
@@ -40,6 +40,13 @@ from django.http import QueryDict
 from django.test import RequestFactory
 from django.urls import reverse
 from django.utils.timezone import now
+
+try:
+    # Django >= 3
+    from django.db.models import JSONField
+except ImportError:
+    # older django
+    from django.contrib.postgress.fields import JSONField
 
 try:
     # older Django
