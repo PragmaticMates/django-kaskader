@@ -46,7 +46,7 @@ try:
     from django.db.models import JSONField
 except ImportError:
     # older django
-    from django.contrib.postgress.fields import JSONField
+    from django.contrib.postgres.fields import JSONField
 
 try:
     # older Django
