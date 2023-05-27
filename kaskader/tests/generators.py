@@ -321,7 +321,6 @@ class GenericBaseMixin(object):
         tree = ast.parse(args)
         funccall = tree.body[0].value
 
-        import sys
         if sys.version_info[0] >= 3:
             if eval_args:
                 args = [ast.literal_eval(arg) for arg in funccall.args if ast.unparse(arg) != '*args']
@@ -695,10 +694,11 @@ class GenericBaseMixin(object):
         # sort alphabetically for consistent initial order
         sorted_models = OrderedDict(sorted(cls.get_models_dependency(required_only).items(), key=lambda x: x[0]._meta.label, reverse=reverse))
 
-        # move manual dependencies to the beggining to force correct order (sort by dependencies is too ambiguous)
-        for model, dependcies in cls.manual_model_dependency().items():
-            for dependency in dependcies:
-                sorted_models.move_to_end(dependency, last=reverse)
+        if sys.version_info[0] >= 3:
+            # move manual dependencies to the beggining to force correct order (sort by dependencies is too ambiguous)
+            for model, dependcies in cls.manual_model_dependency().items():
+                for dependency in dependcies:
+                    sorted_models.move_to_end(dependency, last=reverse)
 
         # sort by dependencies
         sorted_models = OrderedDict(sorted(sorted_models.items(), key=functools.cmp_to_key(compare_models_dependency), reverse=reverse))
