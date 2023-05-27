@@ -15,7 +15,7 @@ from rq import SimpleWorker
 
 class RqMixin(object):
     def setUp(self):
-        super().setUp()
+        super(RqMixin, self).setUp()
         queue = django_rq.get_queue('default')
         queue.empty()
 
@@ -346,7 +346,7 @@ class PermissionTestMixin(object):
     USER_MODEL = User
 
     def setUp(self):
-        super().setUp()
+        super(PermissionTestMixin, self).setUp()
         self.logged_user = self.USER_MODEL.objects.create_user(first_name='permission user', email='permission_user@test.com', password='demodemo', is_active=True)
         self.client.login(email=self.logged_user.email, password='demodemo')
 
