@@ -23,8 +23,12 @@ class ExtensionDiscoverRunner(DiscoverRunner):
 
     def setup_databases(self, **kwargs):
         # https://code.djangoproject.com/ticket/31221 when running tests on already existing db without migrating
-        from django.contrib.postgres.signals import get_hstore_oids
-        get_hstore_oids.cache_clear()
+        try:
+            from django.contrib.postgres.signals import get_hstore_oids
+        except ImportError:
+            pass
+        else:
+            get_hstore_oids.cache_clear()
 
         result = super().setup_databases(**kwargs)
 
