@@ -167,7 +167,7 @@ class GenericBaseMixin(object):
             postgres_fields.JSONField: {},
             postgres_fields.ArrayField: lambda f: [cls.default_field_map()[f.base_field.__class__](f.base_field)],
             JSONField: {},
-            URLField: lambda f: f'www.google.com',
+            URLField: lambda f: 'www.google.com',
             if_countries.CountryField: 'LU',
             if_iban.IBANField: 'LU28 0019 4006 4475 0000',
             if_vat.VATNumberField: lambda f: 'LU{}'.format(random.randint(10000000, 99999999)),  # 'GB904447273',
@@ -201,7 +201,7 @@ class GenericBaseMixin(object):
             django_form_fields.BooleanField: True,
             django_form_fields.NullBooleanField: True,
             django_form_fields.MultipleChoiceField: lambda f: [list(f.choices)[-1][0]] if f.choices else ['{}'.format(f.label)],
-            django_form_fields.URLField: lambda f: f'www.google.com',
+            django_form_fields.URLField: lambda f: 'www.google.com',
             django_form_fields.DurationField: 1,
             django_form_fields.JSONField: '',
             django_form_fields.SplitDateTimeField: lambda f: [now().date(), now().time()],
@@ -212,8 +212,8 @@ class GenericBaseMixin(object):
             postgres_forms.SimpleArrayField: lambda f: [cls.default_form_field_map()[f.base_field.__class__](f.base_field)],
             postgres_forms.DateTimeRangeField: lambda f: [now().strftime(list(f.input_formats)[-1]) if hasattr(f, 'input_formats') else now(), now().strftime(list(f.input_formats)[-1]) if hasattr(f, 'input_formats') else now()],
             pragmatic_fields.AlwaysValidChoiceField: lambda f: list(f.choices)[-1][0] if f.choices else '{}'.format(f.label),
-            pragmatic_fields.AlwaysValidMultipleChoiceField: lambda f: f'{list(f.choices)[-1][0]}' if f.choices else '{}'.format(f.label),
-            pragmatic_fields.SliderField: lambda f: f'{f.min},{f.max}' if f.has_range else f'{f.min}',
+            pragmatic_fields.AlwaysValidMultipleChoiceField: lambda f: str(list(f.choices)[-1][0]) if f.choices else str(f.label),
+            pragmatic_fields.SliderField: lambda f: '{},{}'.format(f.min, f.max) if f.has_range else str(f.min),
             if_countries.CountryFormField: 'LU',  # random.choice(UN_RECOGNIZED_COUNTRIES),
             if_iban.IBANFormField: 'LU28 0019 4006 4475 0000',
             if_vat.VATNumberFormField: lambda f: 'LU{}'.format(random.randint(10000000, 99999999)),  # 'GB904447273',
@@ -392,7 +392,7 @@ class GenericBaseMixin(object):
     def get_response_view_as_filter_function(cls, **kwargs):
         # returns function for specific response view as function of filter kwargs in url,
         def filter_function(**filter_kargs):
-            kwargs['path'] = kwargs.get('path', '/') + '?' + '&'.join([f'{key}={value}' for key, value in filter_kargs.items()])
+            kwargs['path'] = kwargs.get('path', '/') + '?' + '&'.join(['{}={}'.format(key, value) for key, value in filter_kargs.items()])
             return cls.get_response_view(**kwargs)
 
         return filter_function
@@ -758,7 +758,7 @@ class GenericBaseMixin(object):
                         'Don\'t know ho to generate {}.{} value {}'.format(model._meta.label, field.name, field_value))
 
                 if isinstance(field, CharField) and (field.name in unique_fields or field.unique) and not field.choices:
-                    field_value = f'{field_value}_{cls.next_id(model)}'
+                    field_value = '{}_{}'.format(field_value, cls.next_id(model))
 
                 field_values[field.name] = field.to_python(field_value) # to save default lazy values correctly, should not be problem in any case
 
@@ -863,7 +863,7 @@ class GenericBaseMixin(object):
     @classmethod
     def get_generated_obj(cls, model=None, obj_name=None):
         if model is None and obj_name is None:
-            raise Exception(f'At least one argument is necessary')
+            raise Exception('At least one argument is necessary')
 
         if obj_name is None:
             if model._meta.proxy:
@@ -902,7 +902,7 @@ class GenericBaseMixin(object):
 
         if not obj:
             if obj_name:
-                raise Exception(f'{model} object with name {obj_name} doesn\'t exist')
+                raise Exception('{} object with name {} doesn\'t exist'.format(model, obj_name))
 
             raise Exception('Something\'s fucked')
 
@@ -1025,7 +1025,6 @@ class GenericBaseMixin(object):
 
         return {}.get(filter_class, cls.generate_func_args(filter_class.__init__, default=default))
 
-
     @classmethod
     def setUpTestData(cls):
         super(GenericBaseMixin, cls).setUpTestData()
@@ -1061,7 +1060,7 @@ class GenericBaseMixin(object):
         for formset_key in formset_keys:
             formset = response.context[formset_key]
             # prefix_template = formset.empty_form.prefix # default is 'form-__prefix__'
-            prefix = f'{formset.prefix}-'
+            prefix = '{}-'.format(formset.prefix)
             # extract initial formset data
             management_form_data = formset.management_form.initial
 
@@ -1072,9 +1071,9 @@ class GenericBaseMixin(object):
 
             # generate individual forms data
             for index, form in enumerate(formset.forms):
-                form_prefix = f'{prefix}{index}-'
+                form_prefix = '{}{}-'.format(prefix, index)
                 default_form_data = {key.replace(form_prefix, ''): value for key, value in post_data.items() if key.startswith(form_prefix)}
-                post_data.update({f'{form_prefix}{key}': value for key, value in cls.generate_form_data(form, default_form_data).items()})
+                post_data.update({'{}{}'.format(form_prefix, key): value for key, value in cls.generate_form_data(form, default_form_data).items()})
 
         return post_data
 
@@ -1229,8 +1228,8 @@ class GenericTestMixin(object):
             kwargs = params_map.get('kwargs', {})
 
             if kwargs:
-                kwargs = '&'.join([f'{key}={value}' for key, value in kwargs.items()])
-                path = f'{path}?{kwargs}'
+                kwargs = '&'.join(['{}={}'.format(key, value) for key, value in kwargs.items()])
+                path = '{}?{}'.format(path, kwargs)
 
         return path, parsed_args, fails
 
