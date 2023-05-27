@@ -403,7 +403,7 @@ class GenericBaseMixin(object):
         # 1. model names and assigns generated objs acordingly,
         # 2. field names of instance.model if exists such that instance.func
         models = {model._meta.label_lower.split('.')[-1]: model for model in cls.get_models()}
-        result_kwargs = {**default}
+        result_kwargs = dict(default)
 
         try:
             for name, value in kwargs.items():
@@ -1054,7 +1054,7 @@ class GenericBaseMixin(object):
 
     @classmethod
     def create_formset_post_data(cls, response, post_data={}):
-        post_data = {**post_data}
+        post_data = dict(**post_data)
         formset_keys = [key for key in response.context.keys() if 'formset' in key and response.context[key]]
 
         for formset_key in formset_keys:
