@@ -42,7 +42,6 @@ from django.urls import reverse
 from django.utils.timezone import now
 
 try:
-    # Django >= 3
     from django.db.models import JSONField
 except ImportError:
     # older django
@@ -321,25 +320,28 @@ class GenericBaseMixin(object):
         args = 'f({})'.format(args)
         tree = ast.parse(args)
         funccall = tree.body[0].value
-        if eval_args:
-            args = [ast.literal_eval(arg) for arg in funccall.args if ast.unparse(arg) != '*args']
-        else:
-            args = [ast.unparse(arg) for arg in funccall.args if ast.unparse(arg) != '*args']
 
-        if eval_kwargs:
-            kwargs = {arg.arg: ast.literal_eval(arg.value) for arg in funccall.keywords if arg.arg is not None}
-        else:
-            kwargs = {arg.arg: ast.unparse(arg.value) for arg in funccall.keywords if arg.arg is not None}
+        import sys
+        if sys.version_info[0] >= 3:
+            if eval_args:
+                args = [ast.literal_eval(arg) for arg in funccall.args if ast.unparse(arg) != '*args']
+            else:
+                args = [ast.unparse(arg) for arg in funccall.args if ast.unparse(arg) != '*args']
 
-        # if eval_args:
-        #     args = [ast.literal_eval(arg) for arg in funccall.args if arg.id != '*args']
-        # else:
-        #     args = [arg.elts if isinstance(arg, ast.List) else arg.id for arg in funccall.args if isinstance(arg, ast.List) or ast.unparse(arg) != '*args']
-        #
-        # if eval_kwargs:
-        #     kwargs = {arg.arg: ast.literal_eval(arg.value) for arg in funccall.keywords if arg.arg is not None}
-        # else:
-        #     kwargs = {arg.arg: arg.value.attr if isinstance(arg.value, ast.Attribute) else arg.value.s if isinstance(arg.value, ast.Str) else arg.value.id  for arg in funccall.keywords if arg.arg is not None}
+            if eval_kwargs:
+                kwargs = {arg.arg: ast.literal_eval(arg.value) for arg in funccall.keywords if arg.arg is not None}
+            else:
+                kwargs = {arg.arg: ast.unparse(arg.value) for arg in funccall.keywords if arg.arg is not None}
+        else:
+            if eval_args:
+                args = [ast.literal_eval(arg) for arg in funccall.args if arg.id != '*args']
+            else:
+                args = [arg.elts if isinstance(arg, ast.List) else arg.id for arg in funccall.args if isinstance(arg, ast.List) or ast.unparse(arg) != '*args']
+
+            if eval_kwargs:
+                kwargs = {arg.arg: ast.literal_eval(arg.value) for arg in funccall.keywords if arg.arg is not None}
+            else:
+                kwargs = {arg.arg: arg.value.attr if isinstance(arg.value, ast.Attribute) else arg.value.s if isinstance(arg.value, ast.Str) else arg.value.id  for arg in funccall.keywords if arg.arg is not None}
 
         return args, kwargs
 
