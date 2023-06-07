@@ -320,10 +320,13 @@ class ManagerTestMixin(object):
                 continue
 
             # call method with params
-            try:
-                method(**params)
-            except TypeError:
-                method(params)
+            if isinstance(params, list):
+                method(*params)
+            else:
+                try:
+                    method(**params)
+                except TypeError:
+                    method(params)
 
         # look for not tested methods
         existing_methods = {attr for attr in qs_or_manager.__class__.__dict__.keys()
