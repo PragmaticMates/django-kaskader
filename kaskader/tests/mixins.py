@@ -47,11 +47,21 @@ class RqMixin(object):
 
         if job_name is not None:
             for job in queue.get_jobs():
-                if not job.func_name.endswith(job_name):
+                if not job.func_name.split('.')[-1] == job_name:
                     queue.remove(job)
 
         worker = SimpleWorker([queue], connection=queue.connection)
         worker.work(burst=True)
+
+    def is_job_queued(self, job_name, channel='default'):
+        queue = django_rq.get_queue(channel)
+
+        if job_name is not None:
+            for job in queue.get_jobs():
+                if job.func_name.split('.')[-1] == job_name:
+                    return True
+
+        return False
 
 
 class UrlTestMixin(object):
