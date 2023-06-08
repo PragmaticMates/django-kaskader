@@ -15,7 +15,7 @@ from rq import SimpleWorker
 
 class RqMixin(object):
     def setUp(self):
-        super().setUp()
+        super(RqMixin, self).setUp()
         queue = django_rq.get_queue('default')
         queue.empty()
 
@@ -47,11 +47,21 @@ class RqMixin(object):
 
         if job_name is not None:
             for job in queue.get_jobs():
-                if not job.func_name.endswith(job_name):
+                if not job.func_name.split('.')[-1] == job_name:
                     queue.remove(job)
 
         worker = SimpleWorker([queue], connection=queue.connection)
         worker.work(burst=True)
+
+    def is_job_queued(self, job_name, channel='default'):
+        queue = django_rq.get_queue(channel)
+
+        if job_name is not None:
+            for job in queue.get_jobs():
+                if job.func_name.split('.')[-1] == job_name:
+                    return True
+
+        return False
 
 
 class UrlTestMixin(object):
@@ -320,10 +330,13 @@ class ManagerTestMixin(object):
                 continue
 
             # call method with params
-            try:
-                method(**params)
-            except TypeError:
-                method(params)
+            if isinstance(params, list):
+                method(*params)
+            else:
+                try:
+                    method(**params)
+                except TypeError:
+                    method(params)
 
         # look for not tested methods
         existing_methods = {attr for attr in qs_or_manager.__class__.__dict__.keys()
@@ -346,7 +359,7 @@ class PermissionTestMixin(object):
     USER_MODEL = User
 
     def setUp(self):
-        super().setUp()
+        super(PermissionTestMixin, self).setUp()
         self.logged_user = self.USER_MODEL.objects.create_user(first_name='permission user', email='permission_user@test.com', password='demodemo', is_active=True)
         self.client.login(email=self.logged_user.email, password='demodemo')
 
