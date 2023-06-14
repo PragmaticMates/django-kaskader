@@ -193,7 +193,7 @@ class GenericBaseMixin(object):
             django_filter_fields.RangeField: lambda f: [1, 100],
             django_filter_fields.DateRangeField: lambda f: (now().date(), now() + timedelta(days=1)),
             django_form_fields.EmailField: lambda f: cls.get_new_email(),
-            django_form_fields.CharField: lambda f: '{}_{}'.format(f.label, random.randint(1, 999))[:f.max_length],
+            django_form_fields.CharField: lambda f: '{}_{}'.format(f.label.encode('utf8'), random.randint(1, 999))[:f.max_length],
             django_form_fields.TypedChoiceField: lambda f: list(f.choices)[-1][1][0][0] if f.choices and isinstance(list(f.choices)[-1][1], list) else list(f.choices)[-1][0] if f.choices else '{}'.format(f.label)[:f.max_length],
             django_form_fields.ChoiceField: lambda f: list(f.choices)[-1][1][0][0] if f.choices and isinstance(list(f.choices)[-1][1], list) else list(f.choices)[-1][0] if f.choices else '{}'.format(f.label)[:f.max_length],
             django_form_fields.ImageField: lambda f: cls.get_image_file_mock(),
