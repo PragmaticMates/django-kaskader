@@ -935,6 +935,9 @@ class GenericBaseMixin(object):
 
     @classmethod
     def next_id(cls, model):
+        '''
+        returns last existing id + 1
+        '''
         last = model.objects.order_by('id').last()
         return last.id + 1 if last else 0
 
@@ -997,6 +1000,7 @@ class GenericBaseMixin(object):
                     'kwargs': {},
                     'cookies: {}, # dict or cookie str
                     'data': {},
+                    'init_form_kwargs': {},
                     'form_kwargs': {},
                 },
                 'params_2': {} # passing empty dict behaves as if no params were specified, use to check also default behaviour besides specified params (params_1)
