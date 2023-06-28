@@ -21,12 +21,33 @@ Installation
 
 Usage
 -----
+Subclass GenericBaseMixin and GenericTestMixin in your TestCase class, setup inputs from InputMixin as needed and run test command, generic tests for discovered urls, filters and querysets will be included.
 
+generators.py
+^^^^^^^^^^^^^
 
-Generating test objects
-'''''''''''''''''''''''
-``class GenericBaseMixin(Object)``
-    Provides a number of helper methods for generating and working with Django model objects populated with test data.
+Providing data
+''''''''''''''
+``class InputMixin(object)``
+    Contains all attributes and methods used to specify what objects to create, which apps to test, what to skip.
+    Set attributes as needed and override following methods to modify default behavior.
+
+    Providing obj data
+
+    ``def manual_model_dependency(cls)``
+        Use to add explicit models dependencies based on realtions used for ordering models for generating objects.
+
+    ``def model_field_values_map(cls)``
+        Use to specify objects with predefined values to generate.
+
+    ``def model_field_name_map(cls)``
+        Use to specify default model field values by field name.
+
+    ``def default_field_map(cls)``
+        Use to specify default model field values by field class.
+
+    ``def default_form_field_map(cls)``
+        Use to specify default form field values by field class.
 
     Providing test data
 
@@ -39,22 +60,16 @@ Generating test objects
     ``def filter_params_map(self)``
         use to provide specific test values per filter for test_filters
 
-    Providing obj data
+Discovery
+'''''''''
+``class BaseMixin(object)``
+    Contains methods use to search relevant apps, models, urls, parsing args and other basic necessary functionalities.
 
-    ``def manual_model_dependency(cls)``
-        Use to add explicit models dependencies based on realtions used for ordering models for generating objects.
-
-    ``def model_field_values_map(cls)``
-        Use to specify objects with predefined values to generate.
-
-    ``def model_field_values_map(cls)``
-        Use to specify default model field values by field name.
-
-    ``def default_field_map(cls)``
-        Use to specify default model field values by field class.
-
-    ``def default_form_field_map(cls)``
-        Use to specify default form field values by field class.
+Generating test objects
+'''''''''''''''''''''''
+``class GenericBaseMixin(InputMixin, BaseMixin)``
+    Provides a number of helper methods for generating and working with objects populated with test data.
+    Besides following important functions contains also other potentially useful methods for generating specific mock values, etc.
 
     Retrieving objects and data
 
@@ -67,7 +82,7 @@ Generating test objects
     Generating objects
 
     ``def setUpTestData(cls)``
-        Appends object generation to TestCase.setUpTestData() when a test class is loaded, and it is used to set up the test data for the test class.
+        Appends object generation to TestCase.setUpTestData() when a test class is loaded.
 
     ``def generate_objs(cls)``
         Sorts order of models to generate objects for and creates objects for model in that.
@@ -82,7 +97,7 @@ Generating test objects
         Generates obj for given model with values given in kwargs, field values are deprecated.
 
 Generic tests
-''''''''''''''''
+'''''''''''''
 ``class GenericTestMixin(Object)``
     Provides basic tests for urls, filters and querysets
 
@@ -95,6 +110,27 @@ Generic tests
     ``def test_filters(self)``
         finds subclasses of FilterSet and calls filtered queryset for generated form data
 
+missing_tests.py
+^^^^^^^^^^^^^^^^
+``class MissingTestMixin(GenericBaseMixin)``
+    Checks missing tests for signals, permissions, custom filter methods and managers. Test names must use specific pattern to be recognised.
 
+mixins.py
+^^^^^^^^^
+Contains potentailly helpful mixins for various manual tests.
 
+``class RqMixin(object)``
+    Testing rq jobs and scheduling.
+
+``class UrlTestMixin(object)``
+    Testing urls.
+
+``class FilterTestMixin(object)``
+    Testing filters.
+
+``class ManagerTestMixin(object)``
+    Testing managers.
+
+``class PermissionTestMixin(object)``
+    Testing permissions.
 
