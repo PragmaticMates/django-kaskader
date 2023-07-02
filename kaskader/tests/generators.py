@@ -68,19 +68,19 @@ if 'gm2m' in getattr(settings, 'INSTALLED_APPS'):
 else:
     RELATED_FIELDS = (RelatedField)
 
-
-class GenericBaseMixin(object):
+class InputMixin(object):
     # USER_MODEL = User # there is possibility to manualy specify user model to be used, see user_model()
-    objs = OrderedDict()
-    TEST_PASSWORD = 'testpassword'
-    IGNORE_MODEL_FIELDS = {}    # values for these model fields will not be generated, use for fields with automatically assigned values, for example {MPTTModel: ['lft', 'rght', 'tree_id', 'level']}
-    PRINT_SORTED_MODEL_DEPENDENCY = False
+    CHECK_MODULES = []  # list modules which should be included, eg [myapp], or more specifically [myapp.core, myapp.subapp1]
+    EXCLUDE_MODULES = ['migrations', 'commands', 'tests', 'settings']    # list all modules that should be excluded from search for models, urls, ..
+    TEST_PASSWORD = 'testpassword'  # login password for users
+    IGNORE_MODEL_FIELDS = {}  # values for these model fields will not be generated, use for fields with automatically assigned values, for example {MPTTModel: ['lft', 'rght', 'tree_id', 'level']}
+    PRINT_SORTED_MODEL_DEPENDENCY = False   # print models dependency for debug purposes
 
     # params for GenericTestMixin.test_urls
     RUN_ONLY_THESE_URL_NAMES = []  # if not empty will run tests only for provided urls, for debug purposes to save time
     RUN_ONLY_URL_NAMES_CONTAINING = []  # if not empty will run tests only for urls containing at least one of provided patterns
-    IGNORE_URL_NAMES_CONTAINING = []    # contained urls will not be tested
-    POST_ONLY_URLS = [] # run only post request tests for these urls
+    IGNORE_URL_NAMES_CONTAINING = []  # contained urls will not be tested
+    POST_ONLY_URLS = []  # run only post request tests for these urls
     GET_ONLY_URLS = []  # run only get request tests for these urls
 
     @classmethod
@@ -118,16 +118,6 @@ class GenericBaseMixin(object):
         }
         '''
         return {}
-
-    @classmethod
-    def user_model(cls):
-        '''
-        User model used for login and permissions
-        '''
-        try:
-            return cls.USER_MODEL
-        except:
-            return get_user_model()
 
     @classmethod
     def default_field_name_map(cls):
@@ -193,7 +183,7 @@ class GenericBaseMixin(object):
             django_filter_fields.RangeField: lambda f: [1, 100],
             django_filter_fields.DateRangeField: lambda f: (now().date(), now() + timedelta(days=1)),
             django_form_fields.EmailField: lambda f: cls.get_new_email(),
-            django_form_fields.CharField: lambda f: '{}_{}'.format(f.label, random.randint(1, 999))[:f.max_length],
+            django_form_fields.CharField: lambda f: '{}_{}'.format(f.label.encode('utf8'), random.randint(1, 999))[:f.max_length],
             django_form_fields.TypedChoiceField: lambda f: list(f.choices)[-1][1][0][0] if f.choices and isinstance(list(f.choices)[-1][1], list) else list(f.choices)[-1][0] if f.choices else '{}'.format(f.label)[:f.max_length],
             django_form_fields.ChoiceField: lambda f: list(f.choices)[-1][1][0][0] if f.choices and isinstance(list(f.choices)[-1][1], list) else list(f.choices)[-1][0] if f.choices else '{}'.format(f.label)[:f.max_length],
             django_form_fields.ImageField: lambda f: cls.get_image_file_mock(),
@@ -240,6 +230,74 @@ class GenericBaseMixin(object):
 
         return map
 
+
+    @property
+    def url_params_map(self):
+        '''{
+            'accounts:user_list':{
+                'params_1: {
+                    'args': [],
+                    'kwargs': {},
+                    'cookies: {}, # dict or cookie str
+                    'data': {},
+                    'init_form_kwargs': {},
+                    'form_kwargs': {},
+                },
+                'params_2': {} # passing empty dict behaves as if no params were specified, use to check also default behaviour besides specified params (params_1)
+        }
+        '''
+        return {}
+
+    @property
+    def queryset_params_map(self):
+        '''{
+            'UserQuerySet: {
+                'restrict_user': {},
+            },
+        }
+        '''
+        return {}
+
+    @property
+    def filter_params_map(self):
+        '''{
+            'UserFilterSet: {
+                'init_kwargs': {},
+                'data': {},
+                'queryset': User.objects.all(), # optional
+            },
+        }
+        '''
+        return {}
+
+    @classmethod
+    def init_form_kwargs(cls, form_class, default=None):
+        '''
+        !!! deprecated !!!
+        {
+            UserForm: {'user': cls.get_generated_obj(User)},
+        }
+        '''
+        if default is None:
+            default = {}
+
+        return {}.get(form_class, cls.generate_func_args(form_class.__init__, default=default))
+
+    @classmethod
+    def init_filter_kwargs(cls, filter_class, default=None):
+        '''
+        !!! deprecated !!!
+        {
+            UserFitler: {'queryset': User.objects.all()}
+        }
+        '''
+        if default is None:
+            default = {}
+
+        return {}.get(filter_class, cls.generate_func_args(filter_class.__init__, default=default))
+
+
+class BaseMixin(object):
     @classmethod
     def import_modules_if_needed(cls):
         '''
@@ -274,7 +332,7 @@ class GenericBaseMixin(object):
 
     @classmethod
     def get_module_class_methods(cls, module):
-        classes = cls.get_module_classes(module)    # get not imported classes defined in module
+        classes = cls.get_module_classes(module)  # get not imported classes defined in module
         methods = set()
 
         for cls in classes:
@@ -355,70 +413,10 @@ class GenericBaseMixin(object):
             if eval_kwargs:
                 kwargs = {arg.arg: ast.literal_eval(arg.value) for arg in funccall.keywords if arg.arg is not None}
             else:
-                kwargs = {arg.arg: arg.value.attr if isinstance(arg.value, ast.Attribute) else arg.value.s if isinstance(arg.value, ast.Str) else arg.value.id for arg in funccall.keywords if arg.arg is not None}
+                kwargs = {arg.arg: arg.value.attr if isinstance(arg.value, ast.Attribute) else arg.value.s if isinstance(arg.value, ast.Str) else arg.value.id for arg in funccall.keywords if
+                          arg.arg is not None}
 
         return args, kwargs
-
-    @classmethod
-    def get_generated_email(cls, model=None):
-        '''
-        shortuct to get genrated email
-        '''
-        if model is None:
-            model = cls.user_model()
-
-        return cls.get_generated_obj(model).email
-
-    @classmethod
-    def get_new_email(cls):
-        return 'email.{}@example.com'.format(random.randint(1, 999))
-
-    @classmethod
-    def get_mock_request(cls, **kwargs):
-        return cls.get_request('/', **kwargs)
-
-    @classmethod
-    def get_request(cls, path='/', **kwargs):
-        request = RequestFactory().get(path)
-
-        for key, value in kwargs.items():
-            setattr(request, key, value)
-
-        return request
-
-    @classmethod
-    def get_response(cls, **kwargs):
-        # return view_class.as_view(**view_kwargs)(request) response for request=RequestFactory.get() with additional request_attributes
-        path = kwargs.get('path', '/')
-        view_class = kwargs.get('view_class', None)
-        view_kwargs = kwargs.get('view_kwargs', {})
-        request_kwargs = kwargs.get('request_atrributes', {})
-
-        if view_class is None:
-            # get from urls.py
-            raise ValueError('view_class not specified')
-
-        request = cls.get_request(path, **request_kwargs)
-        return view_class.as_view(**view_kwargs)(request)
-
-    @classmethod
-    def get_response_view(cls, **kwargs):
-        response = cls.get_response(**kwargs)
-        try:
-            return response.context_data['view']
-        except AttributeError:
-            pass
-
-        return response.context['view']
-
-    @classmethod
-    def get_response_view_as_filter_function(cls, **kwargs):
-        # returns function for specific response view as function of filter kwargs in url,
-        def filter_function(**filter_kargs):
-            kwargs['path'] = kwargs.get('path', '/') + '?' + '&'.join(['{}={}'.format(key, value) for key, value in filter_kargs.items()])
-            return cls.get_response_view(**kwargs)
-
-        return filter_function
 
     @classmethod
     def generate_kwargs(cls, args=[], kwargs={}, func=None, default={}):
@@ -492,25 +490,6 @@ class GenericBaseMixin(object):
         return cls.generate_kwargs(*cls.parse_args(args[0], eval_args=False, eval_kwargs=False), func=func, default=default)
 
     @classmethod
-    def generate_form_data(cls, form, default_data):
-        if inspect.isclass(form):
-            # if class is passed try to get instance
-            form = form(**cls.init_form_kwargs(form, {}))
-
-        data = {}
-
-        for name, field in default_data.items():
-            value = default_data[name]
-            data[name] = value(cls) if callable(value) else value
-
-        for name, field in form.fields.items():
-            if name not in data and not isinstance(field, django_form_models.InlineForeignKeyField): # inline fk is is sued in inline formsets
-                value = cls.default_form_field_map()[field.__class__]
-                data[name] = value(field) if callable(value) else value
-
-        return data
-
-    @classmethod
     def get_url_namespace_map(cls):
         resolver = urls.get_resolver(urls.get_urlconf())
         namespaces = {'': [key for key in resolver.reverse_dict.keys() if not callable(key)]}
@@ -534,6 +513,7 @@ class GenericBaseMixin(object):
         for module_name, source_code in source_by_module.items():
             regex_paths = re.findall(r'app_name=["\']([\w_]+)["\'], ?namespace=["\']([\w_]+)["\']', source_code)
             namespace_map.update({})
+
 
     @classmethod
     def get_url_views_by_module(cls):
@@ -724,6 +704,128 @@ class GenericBaseMixin(object):
         return sorted_models
 
     @classmethod
+    def get_models_fields(cls, model, required=None, related=None):
+        is_required = lambda f: not getattr(f, 'blank', False) if required is True else getattr(f, 'blank', False) if required is False else True
+        is_related = lambda f: isinstance(f, RELATED_FIELDS) if related is True else not isinstance(f, RELATED_FIELDS) if related is False else True
+        is_gm2m = lambda f: isinstance(f, GM2MField) if 'gm2m' in getattr(settings, 'INSTALLED_APPS') and related is True else False
+        return [f for f in model._meta.get_fields() if (is_required(f) and is_related(f) and f.concrete and not f.auto_created) or (is_required(f) and is_gm2m(f))]
+
+
+class GenericBaseMixin(InputMixin, BaseMixin):
+    objs = OrderedDict()
+
+    @classmethod
+    def setUpTestData(cls):
+        super(GenericBaseMixin, cls).setUpTestData()
+
+        cls.import_modules_if_needed()
+        cls.generate_objs()
+
+    def setUp(self):
+        user = self.objs.get('superuser', self.get_generated_obj(self.user_model()))
+        credentials = {'password': self.TEST_PASSWORD}
+
+        if hasattr(user, 'email'):
+            credentials['email'] = user.email
+
+        if hasattr(user, 'username'):
+            credentials['username'] = user.username
+
+        logged_in = self.client.login(**credentials)
+        self.assertTrue(logged_in)
+        self.user = user
+
+    @classmethod
+    def user_model(cls):
+        '''
+        User model used for login and permissions
+        '''
+        try:
+            return cls.USER_MODEL
+        except:
+            return get_user_model()
+
+    @classmethod
+    def get_generated_email(cls, model=None):
+        '''
+        shortuct to get genrated email
+        '''
+        if model is None:
+            model = cls.user_model()
+
+        return cls.get_generated_obj(model).email
+
+    @classmethod
+    def get_new_email(cls):
+        return 'email.{}@example.com'.format(random.randint(1, 999))
+
+    @classmethod
+    def get_mock_request(cls, **kwargs):
+        return cls.get_request('/', **kwargs)
+
+    @classmethod
+    def get_request(cls, path='/', **kwargs):
+        request = RequestFactory().get(path)
+
+        for key, value in kwargs.items():
+            setattr(request, key, value)
+
+        return request
+
+    @classmethod
+    def get_response(cls, **kwargs):
+        # return view_class.as_view(**view_kwargs)(request) response for request=RequestFactory.get() with additional request_attributes
+        path = kwargs.get('path', '/')
+        view_class = kwargs.get('view_class', None)
+        view_kwargs = kwargs.get('view_kwargs', {})
+        request_kwargs = kwargs.get('request_atrributes', {})
+
+        if view_class is None:
+            # get from urls.py
+            raise ValueError('view_class not specified')
+
+        request = cls.get_request(path, **request_kwargs)
+        return view_class.as_view(**view_kwargs)(request)
+
+    @classmethod
+    def get_response_view(cls, **kwargs):
+        response = cls.get_response(**kwargs)
+        try:
+            return response.context_data['view']
+        except AttributeError:
+            pass
+
+        return response.context['view']
+
+    @classmethod
+    def get_response_view_as_filter_function(cls, **kwargs):
+        # returns function for specific response view as function of filter kwargs in url,
+        def filter_function(**filter_kargs):
+            kwargs['path'] = kwargs.get('path', '/') + '?' + '&'.join(['{}={}'.format(key, value) for key, value in filter_kargs.items()])
+            return cls.get_response_view(**kwargs)
+
+        return filter_function
+
+    @classmethod
+    def generate_form_data(cls, form, default_data):
+        if inspect.isclass(form):
+            # if class is passed try to get instance
+            form = form(**cls.init_form_kwargs(form, {}))
+
+        data = {}
+
+        for name, field in default_data.items():
+            value = default_data[name]
+            data[name] = value(cls) if callable(value) else value
+
+        for name, field in form.fields.items():
+            if name not in data and not isinstance(field, django_form_models.InlineForeignKeyField): # inline fk is is sued in inline formsets
+                value = cls.default_form_field_map()[field.__class__]
+                data[name] = value(field) if callable(value) else value
+
+        return data
+
+    @classmethod
     def generate_objs(cls):
         models_hierarchy = cls.get_sorted_models_dependency(required_only=False)
         generated_objs = OrderedDict()
@@ -744,12 +846,6 @@ class GenericBaseMixin(object):
         for model in models_hierarchy.keys():
             model.objects.all().delete()
 
-    @classmethod
-    def get_models_fields(cls, model, required=None, related=None):
-        is_required = lambda f: not getattr(f, 'blank', False) if required is True else getattr(f, 'blank', False) if required is False else True
-        is_related = lambda f: isinstance(f, RELATED_FIELDS) if related is True else not isinstance(f, RELATED_FIELDS) if related is False else True
-        is_gm2m = lambda f: isinstance(f, GM2MField) if 'gm2m' in getattr(settings, 'INSTALLED_APPS') and related is True else False
-        return [f for f in model._meta.get_fields() if (is_required(f) and is_related(f) and f.concrete and not f.auto_created) or (is_required(f) and is_gm2m(f))]
 
     @classmethod
     def generate_model_field_values(cls, model, field_values={}):
@@ -935,6 +1031,9 @@ class GenericBaseMixin(object):
 
     @classmethod
     def next_id(cls, model):
+        '''
+        returns last existing id + 1
+        '''
         last = model.objects.order_by('id').last()
         return last.id + 1 if last else 0
 
@@ -987,88 +1086,6 @@ class GenericBaseMixin(object):
                 return random.randint(1, limit_value)
 
         return random.randint(1, 9)
-
-    @property
-    def url_params_map(self):
-        '''{
-            'accounts:user_list':{
-                'params_1: {
-                    'args': [],
-                    'kwargs': {},
-                    'cookies: {}, # dict or cookie str
-                    'data': {},
-                    'form_kwargs': {},
-                },
-                'params_2': {} # passing empty dict behaves as if no params were specified, use to check also default behaviour besides specified params (params_1)
-        }
-        '''
-        return {}
-
-    @property
-    def queryset_params_map(self):
-        '''{
-            'UserQuerySet: {
-                'restrict_user': {},
-            },
-        }
-        '''
-        return {}
-
-    @property
-    def filter_params_map(self):
-        '''{
-            'UserFilterSet: {
-                'init_kwargs': {},
-                'data': {},
-                'queryset': User.objects.all(), # optional
-            },
-        }
-        '''
-        return {}
-
-    @classmethod
-    def init_form_kwargs(cls, form_class, default=None):
-
-        '''{
-            UserForm: {'user': cls.get_generated_obj(User)},
-        }
-        '''
-        if default is None:
-            default = {}
-
-        return {}.get(form_class, cls.generate_func_args(form_class.__init__, default=default))
-
-    @classmethod
-    def init_filter_kwargs(cls, filter_class, default=None):
-        '''{
-            UserFitler: {'queryset': User.objects.all()}
-        }
-        '''
-        if default is None:
-            default = {}
-
-        return {}.get(filter_class, cls.generate_func_args(filter_class.__init__, default=default))
-
-    @classmethod
-    def setUpTestData(cls):
-        super(GenericBaseMixin, cls).setUpTestData()
-
-        cls.import_modules_if_needed()
-        cls.generate_objs()
-
-    def setUp(self):
-        user = self.objs.get('superuser', self.get_generated_obj(self.user_model()))
-        credentials = {'password': self.TEST_PASSWORD}
-
-        if hasattr(user, 'email'):
-            credentials['email'] = user.email
-
-        if hasattr(user, 'username'):
-            credentials['username'] = user.username
-
-        logged_in = self.client.login(**credentials)
-        self.assertTrue(logged_in)
-        self.user = user
 
     @classmethod
     def print_last_fail(cls, failed):
