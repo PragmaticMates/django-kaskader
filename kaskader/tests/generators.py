@@ -38,7 +38,7 @@ from django.forms import fields as django_form_fields
 from django.forms import models as django_form_models
 from django.http import QueryDict
 from django.test import RequestFactory
-from django.urls import reverse
+from django.urls import reverse, URLResolver, URLPattern, get_resolver
 from django.utils.timezone import now
 
 try:
