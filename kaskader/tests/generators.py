@@ -75,6 +75,7 @@ class InputMixin(object):
     TEST_PASSWORD = 'testpassword'  # login password for users
     IGNORE_MODEL_FIELDS = {}  # values for these model fields will not be generated, use for fields with automatically assigned values, for example {MPTTModel: ['lft', 'rght', 'tree_id', 'level']}
     PRINT_SORTED_MODEL_DEPENDENCY = False   # print models dependency for debug purposes
+    PRINT_TEST_SUBJECT = False # print url params/filter class/queryset being tested
 
     # params for GenericTestMixin.test_urls
     RUN_ONLY_THESE_URL_NAMES = []  # if not empty will run tests only for provided urls, for debug purposes to save time
@@ -1594,6 +1595,7 @@ class GenericTestMixin(object):
         fields = [(f, model) for model in models for f in model._meta.get_fields() if f.concrete and not f.auto_created]
         failed = []
         tested = []
+
         for module_name, module_params in self.get_url_views_by_module().items():
             for path_params in module_params:
                 # print(path_params)
@@ -1610,7 +1612,9 @@ class GenericTestMixin(object):
                 if self.skip_url(path_name):
                     continue
 
-                print(path_params)
+                if self.PRINT_TEST_SUBJECT:
+                    print(path_params)
+
                 tested.append(path_params)
                 url_pattern = path_params["url_pattern"]
                 view_class = path_params['view_class']
@@ -1681,7 +1685,9 @@ class GenericTestMixin(object):
                 params_map = self.queryset_params_map.get(qs_class, {})
 
                 for name, func in queryset_methods:
-                    print('{}.{}'.format(qs_class_label, name))
+                    if self.PRINT_TEST_SUBJECT:
+                        print('{}.{}'.format(qs_class_label, name))
+
                     result = None
                     kwargs = {}
 
@@ -1755,7 +1761,9 @@ class GenericTestMixin(object):
         filter_classes = sorted(filter_classes, key=lambda x: x.__name__)
 
         for i, filter_class in enumerate(filter_classes):
-            print(filter_class)
+            if self.PRINT_TEST_SUBJECT:
+                print(filter_class)
+
             params_maps = self.filter_params_map.get(filter_class, {'default': {}})
 
             for map_name, params_map in params_maps.items():
