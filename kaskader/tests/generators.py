@@ -184,7 +184,7 @@ class InputMixin(object):
             django_filter_fields.RangeField: lambda f: [1, 100],
             django_filter_fields.DateRangeField: lambda f: (now().date(), now() + timedelta(days=1)),
             django_form_fields.EmailField: lambda f: cls.get_new_email(),
-            django_form_fields.CharField: lambda f: '{}_{}'.format(f.label.encode('utf8'), random.randint(1, 999))[:f.max_length],
+            django_form_fields.CharField: lambda f: '{}_{}'.format(f.label.encode('utf8') if f.label else f.label, random.randint(1, 999))[:f.max_length],
             django_form_fields.TypedChoiceField: lambda f: list(f.choices)[-1][1][0][0] if f.choices and isinstance(list(f.choices)[-1][1], list) else list(f.choices)[-1][0] if f.choices else '{}'.format(f.label)[:f.max_length],
             django_form_fields.ChoiceField: lambda f: list(f.choices)[-1][1][0][0] if f.choices and isinstance(list(f.choices)[-1][1], list) else list(f.choices)[-1][0] if f.choices else '{}'.format(f.label)[:f.max_length],
             django_form_fields.ImageField: lambda f: cls.get_image_file_mock(),
@@ -1240,6 +1240,7 @@ class GenericTestMixin(object):
         path = path_name
         url_pattern = path_params['url_pattern']
         args = path_params['args']
+        arg_names = [arg.split(':')[1] if ':' in arg else arg for arg in args]
         view_class = path_params['view_class']
         parsed_args = params_map.get('args', None)
         parsed_kwargs = params_map.get('url_kwargs', None)
@@ -1248,18 +1249,18 @@ class GenericTestMixin(object):
             parsed_args = []
 
         if parsed_kwargs is None:
-            parsed_kwargs = {arg: value for arg, value in zip(args, parsed_args)}
+            parsed_kwargs = {arg: value for arg, value in zip(arg_names, parsed_args)}
         else:
-            parsed_kwargs = {key: value for key, value in parsed_kwargs.items() if key in args}
+            parsed_kwargs = {key: value for key, value in parsed_kwargs.items() if key in arg_names}
 
-        if args and set(parsed_kwargs.keys()) != set(args):
+        if args and set(parsed_kwargs.keys()) != set(arg_names):
             params_map['parsed'] = []
             # parse args from path params
             view_model = None
 
-            if hasattr(view_class, 'model'):
+            if getattr(view_class, 'model', None):
                 view_model = view_class.model
-            elif hasattr(view_class, 'queryset'):
+            elif getattr(view_class, 'queryset', None):
                 view_model = view_class.queryset.model
             else:
                 matching_models = [model for model in models if path_name.split(':')[-1].startswith(model._meta.label_lower.split(".")[-1])]
@@ -1268,18 +1269,17 @@ class GenericTestMixin(object):
                     view_model = matching_models[0]
 
             for arg in args:
-                if arg in parsed_kwargs:
+                arg_type, arg_name = arg.split(':') if ':' in arg else ('int', arg)
+
+                if arg_name in parsed_kwargs:
                     continue
 
                 matching_fields = []
-                atg_type, arg_name = arg.split(':') if ':' in arg else ('int', arg)
 
                 if arg in ['int:pk', 'pk']:
                     matching_fields = [('pk', view_model)]
                 else:
-                    type, name = arg.split(':') if ':' in arg else ('int', arg)
-
-                    if type not in ['int', 'str', 'slug']:
+                    if arg_type not in ['int', 'str', 'slug']:
                         fails.append(OrderedDict({
                             'location': 'URL ARG TYPE',
                             'url name': path_name,
@@ -1289,20 +1289,20 @@ class GenericTestMixin(object):
                         }))
                         continue
 
-                    if name.endswith('_pk'):
+                    if arg_name.endswith('_pk'):
                         # model name
                         matching_fields = [('pk', model) for model in models if
-                                           name == '{}_pk'.format(model._meta.label_lower.split(".")[-1])]
+                                           arg_name == '{}_pk'.format(model._meta.label_lower.split(".")[-1])]
 
                         if len(matching_fields) != 1:
                             # match field  model
-                            matching_fields = [('pk', model) for model in models if name == '{}_pk'.format(
+                            matching_fields = [('pk', model) for model in models if arg_name == '{}_pk'.format(
                                 model._meta.verbose_name.lower().replace(' ', '_'))]
 
                     else:
                         # full name and type match
                         matching_fields = [(field, model) for field, model in fields if
-                                           field.name == name and isinstance(field, IntegerField if type == 'int' else (
+                                           field.name == arg_name and isinstance(field, IntegerField if arg_type == 'int' else (
                                            CharField, BooleanField))]
 
                         if len(matching_fields) > 1:
@@ -1313,24 +1313,24 @@ class GenericTestMixin(object):
                         elif not matching_fields:
                             # full name match
                             matching_fields = [(field, model) for field, model in fields if
-                                               field.name == name and not model._meta.proxy]
+                                               field.name == arg_name and not model._meta.proxy]
 
                             if not matching_fields:
                                 # match name in form model_field to model and field
                                 matching_fields = [(field, model) for field, model in fields if
-                                                   name == '{}_{}'.format(model._meta.label_lower.split(".")[-1],
+                                                   arg_name == '{}_{}'.format(model._meta.label_lower.split(".")[-1],
                                                                           field.name)]
 
                             if not matching_fields:
                                 # this might make problems as only partial match is made
                                 matching_fields = [(p[0], view_model) for p in
                                                    inspect.getmembers(view_model, lambda o: isinstance(o, property)) if
-                                                   p[0].startswith(name)]
+                                                   p[0].startswith(arg_name)]
 
                             if not matching_fields:
                                 # name is contained in field.name of view model
                                 matching_fields = [(field, model) for field, model in fields if
-                                                   model == view_model and name in field.name]
+                                                   model == view_model and arg_name in field.name]
 
                 if len(matching_fields) != 1 or matching_fields[0][1] is None:
                     fails.append(OrderedDict({
@@ -1371,11 +1371,11 @@ class GenericTestMixin(object):
                     }))
                     continue
 
-                parsed_kwargs[arg] = arg_value
+                parsed_kwargs[arg_name] = arg_value
                 params_map['parsed'].append({'obj': obj, 'attr_name': attr_name, 'value': arg_value})
 
 
-        if set(args) != set(parsed_kwargs.keys()):
+        if set(arg_names) != set(parsed_kwargs.keys()):
             fails.append(OrderedDict({
                 'location': 'URL ARGS PARSED',
                 'url name': path_name,
