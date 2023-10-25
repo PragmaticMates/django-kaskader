@@ -1220,7 +1220,7 @@ class GenericTestMixin(object):
                     continue
 
             # POST url
-            if url_name not in self.GET_ONLY_URLS and getattr(view_class, 'form_class', None):
+            if hasattr(view_class, 'post') and url_name not in self.GET_ONLY_URLS and getattr(view_class, 'form_class', None):
                 fails = self.post_url_test(url_name, path, parsed_args, pattern, view_class, params_map, get_response)
 
                 if fails:
