@@ -38,7 +38,7 @@ from django.forms import fields as django_form_fields
 from django.forms import models as django_form_models
 from django.http import QueryDict
 from django.test import RequestFactory
-from django.urls import reverse
+from django.urls import reverse, URLResolver, URLPattern, get_resolver
 from django.utils.timezone import now
 
 try:
@@ -75,6 +75,7 @@ class InputMixin(object):
     TEST_PASSWORD = 'testpassword'  # login password for users
     IGNORE_MODEL_FIELDS = {}  # values for these model fields will not be generated, use for fields with automatically assigned values, for example {MPTTModel: ['lft', 'rght', 'tree_id', 'level']}
     PRINT_SORTED_MODEL_DEPENDENCY = False   # print models dependency for debug purposes
+    PRINT_TEST_SUBJECT = False # print url params/filter class/queryset being tested
 
     # params for GenericTestMixin.test_urls
     RUN_ONLY_THESE_URL_NAMES = []  # if not empty will run tests only for provided urls, for debug purposes to save time
@@ -183,7 +184,7 @@ class InputMixin(object):
             django_filter_fields.RangeField: lambda f: [1, 100],
             django_filter_fields.DateRangeField: lambda f: (now().date(), now() + timedelta(days=1)),
             django_form_fields.EmailField: lambda f: cls.get_new_email(),
-            django_form_fields.CharField: lambda f: '{}_{}'.format(f.label.encode('utf8'), random.randint(1, 999))[:f.max_length],
+            django_form_fields.CharField: lambda f: '{}_{}'.format(f.label.encode('utf8') if f.label else f.label, random.randint(1, 999))[:f.max_length],
             django_form_fields.TypedChoiceField: lambda f: list(f.choices)[-1][1][0][0] if f.choices and isinstance(list(f.choices)[-1][1], list) else list(f.choices)[-1][0] if f.choices else '{}'.format(f.label)[:f.max_length],
             django_form_fields.ChoiceField: lambda f: list(f.choices)[-1][1][0][0] if f.choices and isinstance(list(f.choices)[-1][1], list) else list(f.choices)[-1][0] if f.choices else '{}'.format(f.label)[:f.max_length],
             django_form_fields.ImageField: lambda f: cls.get_image_file_mock(),
@@ -1124,6 +1125,111 @@ class GenericTestMixin(object):
     Only containing generic tests
     eveything else, setup methods etc., is in GenericBaseMixin
     '''
+    default_url_params = {}
+
+    def test_urls(self):
+        self.models = self.get_models()
+        self.model_fields = [(f, model) for model in self.models for f in model._meta.get_fields() if f.concrete and not f.auto_created]
+        self.failed = []
+        self.tested = []
+
+        urls = get_resolver()
+        self.crawl_urls(urls)
+
+        if self.failed:
+            # append failed count at the end of error list
+            self.failed.append('{}/{} urls FAILED: {}'.format(len(self.failed), len(self.tested), ', '.join([f['url name'] for f in self.failed])))
+
+        self.assertFalse(self.failed, msg=pformat(self.failed, indent=4))
+
+    def crawl_urls(self, urls, parent_pattern='', parent_namespace='', parent_app_name='', filter_namespace=None, filter_app_name=None):
+        for url in urls.url_patterns:
+            if isinstance(url, URLResolver):
+                if self.PRINT_TEST_SUBJECT and (filter_namespace is None or filter_namespace == url.namespace) and (filter_app_name is None or filter_app_name == url.app_name):
+                    print('NAMESPACE', url.namespace, 'APP_NAME', url.app_name)
+
+                self.crawl_urls(url, f'{parent_pattern}{url.pattern}', f"{parent_namespace}:{url.namespace or ''}", f"{parent_app_name}:{url.app_name or ''}", filter_namespace, filter_app_name)
+
+            elif isinstance(url, URLPattern):
+                # print(if_none(parent_pattern) + str(url.pattern))
+                if (filter_namespace is None or filter_namespace in parent_namespace) and (filter_app_name is None or filter_app_name in parent_app_name):
+                    # print(url.__dict__.keys(), url.callback.__dict__)
+                    self.crawl_urls_action(url, parent_pattern, parent_namespace, parent_app_name)
+
+    def crawl_urls_action(self, url, parent_pattern, parent_namespace, parent_app_name):
+        url_name = f"{parent_namespace}:{url.name or ''}".lstrip(':')
+        pattern = f'{parent_pattern}{url.pattern}'
+        args = re.findall(r'<([:\w]+)>', pattern)
+
+        if hasattr(url.callback, 'view_class'):
+            view_class = url.callback.view_class
+            view_initkwargs = url.callback.view_initkwargs
+        elif hasattr(url.callback, 'cls'):
+            # rest api generated views
+            view_class = url.callback.cls
+            view_initkwargs = {}
+        else:
+            # api root
+            # print(f'{if_none(parent_pattern)}:{if_none(url.name)}', url.callback.__dict__)
+            return
+
+        if not url_name or self.skip_url(url_name):
+            return
+
+        path_params = {
+            'path_name': url_name,
+            'args': args,
+            'url_pattern': pattern,
+            'view_class': view_class,
+            'view_params': ([], view_initkwargs),  # self.parse_args(view_initkwargs, eval_args=False, eval_kwargs=False),
+        }
+
+        if self.PRINT_TEST_SUBJECT:
+            print(path_params)
+
+        self.tested.append(path_params)
+        params_maps = self.url_params_map.get(url_name, {'default': self.default_url_params})
+
+        for map_name, params_map in params_maps.items():
+            parsed_args = params_map.get('args', None)
+
+            if len(params_maps) > 1 and parsed_args is not None and len(args) != len(parsed_args):
+                # when there are mmultiple params maps provided match by arguments length
+                continue
+
+            path, parsed_kwargs, fails = self.prepare_url(url_name, path_params, params_map, self.models, self.model_fields)
+            parsed_args = parsed_kwargs.values()
+
+            if fails:
+                self.failed.extend(fails)
+                continue
+
+            # set cookies
+            cookies = params_map.get('cookies', None)
+
+            if cookies is not None:
+                initial_cookies = self.client.cookies
+                self.client.cookies.load(cookies)
+
+            # GET url
+            if hasattr(view_class, 'get') and not url_name in self.POST_ONLY_URLS:
+                get_response, fails = self.get_url_test(url_name, path, parsed_args, pattern, view_class, params_map)
+
+                if fails:
+                    self.failed.extend(fails)
+                    continue
+
+            # POST url
+            if hasattr(view_class, 'post') and url_name not in self.GET_ONLY_URLS and getattr(view_class, 'form_class', None):
+                fails = self.post_url_test(url_name, path, parsed_args, pattern, view_class, params_map, get_response)
+
+                if fails:
+                    self.failed.extend(fails)
+                    continue
+
+            # reset cookies
+            if cookies is not None:
+                self.client.cookies = initial_cookies
 
     def prepare_url(self, path_name, path_params, params_map, models, fields):
         '''
@@ -1132,35 +1238,48 @@ class GenericTestMixin(object):
         '''
         fails = []
         path = path_name
-        url_pattern = path_params["url_pattern"]
+        url_pattern = path_params['url_pattern']
         args = path_params['args']
+        arg_names = [arg.split(':')[1] if ':' in arg else arg for arg in args]
         view_class = path_params['view_class']
         parsed_args = params_map.get('args', None)
+        parsed_kwargs = params_map.get('url_kwargs', None)
 
         if parsed_args is None or not args:
             parsed_args = []
 
-        if args and not parsed_args:
+        if parsed_kwargs is None:
+            parsed_kwargs = {arg: value for arg, value in zip(arg_names, parsed_args)}
+        else:
+            parsed_kwargs = {key: value for key, value in parsed_kwargs.items() if key in arg_names}
+
+        if args and set(parsed_kwargs.keys()) != set(arg_names):
             params_map['parsed'] = []
             # parse args from path params
-            view_model = view_class.model if hasattr(view_class, 'model') else None
+            view_model = None
 
-            if view_model is None:
-                matching_models = [model for model in models if
-                                   path_name.split(':')[-1].startswith(model._meta.label_lower.split(".")[-1])]
+            if getattr(view_class, 'model', None):
+                view_model = view_class.model
+            elif getattr(view_class, 'queryset', None):
+                view_model = view_class.queryset.model
+            else:
+                matching_models = [model for model in models if path_name.split(':')[-1].startswith(model._meta.label_lower.split(".")[-1])]
 
                 if len(matching_models) == 1:
                     view_model = matching_models[0]
 
             for arg in args:
+                arg_type, arg_name = arg.split(':') if ':' in arg else ('int', arg)
+
+                if arg_name in parsed_kwargs:
+                    continue
+
                 matching_fields = []
 
                 if arg in ['int:pk', 'pk']:
                     matching_fields = [('pk', view_model)]
                 else:
-                    type, name = arg.split(':') if ':' in arg else ('int', arg)
-
-                    if type not in ['int', 'str', 'slug']:
+                    if arg_type not in ['int', 'str', 'slug']:
                         fails.append(OrderedDict({
                             'location': 'URL ARG TYPE',
                             'url name': path_name,
@@ -1170,20 +1289,20 @@ class GenericTestMixin(object):
                         }))
                         continue
 
-                    if name.endswith('_pk'):
+                    if arg_name.endswith('_pk'):
                         # model name
                         matching_fields = [('pk', model) for model in models if
-                                           name == '{}_pk'.format(model._meta.label_lower.split(".")[-1])]
+                                           arg_name == '{}_pk'.format(model._meta.label_lower.split(".")[-1])]
 
                         if len(matching_fields) != 1:
                             # match field  model
-                            matching_fields = [('pk', model) for model in models if name == '{}_pk'.format(
+                            matching_fields = [('pk', model) for model in models if arg_name == '{}_pk'.format(
                                 model._meta.verbose_name.lower().replace(' ', '_'))]
 
                     else:
                         # full name and type match
                         matching_fields = [(field, model) for field, model in fields if
-                                           field.name == name and isinstance(field, IntegerField if type == 'int' else (
+                                           field.name == arg_name and isinstance(field, IntegerField if arg_type == 'int' else (
                                            CharField, BooleanField))]
 
                         if len(matching_fields) > 1:
@@ -1194,24 +1313,24 @@ class GenericTestMixin(object):
                         elif not matching_fields:
                             # full name match
                             matching_fields = [(field, model) for field, model in fields if
-                                               field.name == name and not model._meta.proxy]
+                                               field.name == arg_name and not model._meta.proxy]
 
                             if not matching_fields:
                                 # match name in form model_field to model and field
                                 matching_fields = [(field, model) for field, model in fields if
-                                                   name == '{}_{}'.format(model._meta.label_lower.split(".")[-1],
+                                                   arg_name == '{}_{}'.format(model._meta.label_lower.split(".")[-1],
                                                                           field.name)]
 
                             if not matching_fields:
                                 # this might make problems as only partial match is made
                                 matching_fields = [(p[0], view_model) for p in
                                                    inspect.getmembers(view_model, lambda o: isinstance(o, property)) if
-                                                   p[0].startswith(name)]
+                                                   p[0].startswith(arg_name)]
 
                             if not matching_fields:
                                 # name is contained in field.name of view model
                                 matching_fields = [(field, model) for field, model in fields if
-                                                   model == view_model and name in field.name]
+                                                   model == view_model and arg_name in field.name]
 
                 if len(matching_fields) != 1 or matching_fields[0][1] is None:
                     fails.append(OrderedDict({
@@ -1252,56 +1371,28 @@ class GenericTestMixin(object):
                     }))
                     continue
 
-                parsed_args.append(arg_value)
+                parsed_kwargs[arg_name] = arg_value
                 params_map['parsed'].append({'obj': obj, 'attr_name': attr_name, 'value': arg_value})
 
-        if len(args) != len(parsed_args):
+
+        if set(arg_names) != set(parsed_kwargs.keys()):
             fails.append(OrderedDict({
                 'location': 'URL ARGS PARSED',
                 'url name': path_name,
                 'url pattern': url_pattern,
                 'args': args,
-                'parsed args': parsed_args,
+                'parsed args': parsed_kwargs,
                 'traceback': 'Url args parsing failed'
             }))
         else:
-            path = reverse(path_name, args=parsed_args)
+            path = reverse(path_name, kwargs=parsed_kwargs)
             kwargs = params_map.get('kwargs', {})
 
             if kwargs:
-                kwargs = '&'.join(['{}={}'.format(key, value) for key, value in kwargs.items()])
-                path = '{}?{}'.format(path, kwargs)
+                kwargs = '&'.join([f'{key}={value}' for key, value in kwargs.items()])
+                path = f'{path}?{kwargs}'
 
-        return path, parsed_args, fails
-
-    def get_namespace(self, path_params, module_name):
-        module_namespace = module_name.replace('.urls', '').split('.')[-1]
-        app_name = path_params['app_name']
-        path_name = path_params['path_name']
-        fails = []
-
-        namespaces = [namespace for namespace, namespace_path_names in self.get_url_namespace_map().items() if
-                      namespace.endswith(module_namespace) and path_name in namespace_path_names]
-
-        if not namespaces:
-            namespaces = [namespace for namespace, namespace_path_names in self.get_url_namespace_map().items() if
-                          namespace.endswith(app_name) and path_name in namespace_path_names]
-
-        if not namespaces:
-            namespaces = [namespace for namespace, namespace_path_names in self.get_url_namespace_map().items() if
-                          path_name in namespace_path_names]
-
-        if len(namespaces) != 1:
-            fails.append(OrderedDict({
-                'location': 'NAMESPACE',
-                'url name': path_params["path_name"],
-                'app_name': app_name,
-                'module': module_name,
-                'matching namespaces': namespaces,
-                'traceback': 'Namespace matching failed'
-            }))
-
-        return namespaces[0], fails
+        return path, parsed_kwargs, fails
 
     def skip_url(self, url_name):
         if self.RUN_ONLY_THESE_URL_NAMES and url_name not in self.RUN_ONLY_THESE_URL_NAMES:
@@ -1589,81 +1680,6 @@ class GenericTestMixin(object):
 
         return fails
 
-    def test_urls(self):
-        models = self.get_models()
-        fields = [(f, model) for model in models for f in model._meta.get_fields() if f.concrete and not f.auto_created]
-        failed = []
-        tested = []
-        for module_name, module_params in self.get_url_views_by_module().items():
-            for path_params in module_params:
-                # print(path_params)
-                path = path_name = path_params['path_name']
-
-                namespace, fails = self.get_namespace(path_params, module_name)
-
-                if fails:
-                    failed.extend(fails)
-                    continue
-
-                path = path_name = '{}:{}'.format(namespace, path_name) if namespace else path_params['path_name']
-
-                if self.skip_url(path_name):
-                    continue
-
-                print(path_params)
-                tested.append(path_params)
-                url_pattern = path_params["url_pattern"]
-                view_class = path_params['view_class']
-                params_maps = self.url_params_map.get(path_name, {'default': {}})
-
-                for map_name, params_map in params_maps.items():
-                    parsed_args = params_map.get('args', None)
-                    args = re.findall(r'<([:\w]+)>', url_pattern)
-                    path_params['args'] = args
-
-                    if len(params_maps) > 1 and parsed_args is not None and len(args) != len(parsed_args):
-                        # when there are mmultiple params maps provided match by arguments length
-                        continue
-
-                    path, parsed_args, fails = self.prepare_url(path_name, path_params, params_map, models, fields)
-
-                    if fails:
-                        failed.extend(fails)
-                        continue
-
-                    # set cookies
-                    cookies = params_map.get('cookies', None)
-
-                    if cookies is not None:
-                        initial_cookies = self.client.cookies
-                        self.client.cookies.load(cookies)
-
-                    # GET url
-                    if not path_name in self.POST_ONLY_URLS:
-                        get_response, fails = self.get_url_test(path_name, path, parsed_args, url_pattern, view_class, params_map)
-
-                        if fails:
-                            failed.extend(fails)
-                            continue
-
-                    # POST url
-                    if path_name not in self.GET_ONLY_URLS and getattr(view_class, 'form_class', None):
-                        fails = self.post_url_test(path_name, path, parsed_args, url_pattern, view_class, params_map, get_response)
-
-                        if fails:
-                            failed.extend(fails)
-                            continue
-
-                    # reset cookies
-                    if cookies is not None:
-                        self.client.cookies = initial_cookies
-
-        if failed:
-            # append failed count at the end of error list
-            failed.append('{}/{} urls FAILED: {}'.format(len(failed), len(tested), ', '.join([f['url name'] for f in failed])))
-
-        self.assertFalse(failed, msg=pformat(failed, indent=4))
-
     def test_querysets(self):
         models_querysets = [model._default_manager.all() for model in self.get_models()]
         failed = []
@@ -1681,7 +1697,9 @@ class GenericTestMixin(object):
                 params_map = self.queryset_params_map.get(qs_class, {})
 
                 for name, func in queryset_methods:
-                    print('{}.{}'.format(qs_class_label, name))
+                    if self.PRINT_TEST_SUBJECT:
+                        print('{}.{}'.format(qs_class_label, name))
+
                     result = None
                     kwargs = {}
 
@@ -1755,7 +1773,9 @@ class GenericTestMixin(object):
         filter_classes = sorted(filter_classes, key=lambda x: x.__name__)
 
         for i, filter_class in enumerate(filter_classes):
-            print(filter_class)
+            if self.PRINT_TEST_SUBJECT:
+                print(filter_class)
+
             params_maps = self.filter_params_map.get(filter_class, {'default': {}})
 
             for map_name, params_map in params_maps.items():
