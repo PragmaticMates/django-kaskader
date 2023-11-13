@@ -1498,8 +1498,19 @@ class GenericTestMixin(object):
         try:
             with transaction.atomic():
                 form_class = view_class.form_class
-                view_model = view_class.model if hasattr(view_class, 'model') else form_class.model if hasattr(
-                    form_class, 'model') else None
+                view_model = None
+
+                if hasattr(form_class, '_meta') and getattr(form_class._meta, 'model', None):
+                    view_model = form_class._meta.model
+                elif getattr(form_class, 'model', None):
+                    view_model = form_class.model
+                elif getattr(view_class, 'model', None):
+                    view_model = view_class.model
+                elif getattr(view_class, 'queryset', None):
+                    view_model = view_class.queryset.model
+
+                # view_model = view_class.model if hasattr(view_class, 'model') else form_class.model if hasattr(
+                #     form_class, 'model') else None
                 form_kwargs = params_map.get('form_kwargs', self.generate_func_args(form_class.__init__))
                 form_kwargs = {key: value(self) if callable(value) else value for key, value in form_kwargs.items()}
                 form_kwargs['data'] = data
