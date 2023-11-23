@@ -1472,7 +1472,7 @@ class GenericTestMixin(object):
                         'traceback': traceback.format_exc()
                     }))
                 else:
-                    if hasattr(response, 'template_name'):
+                    if not hasattr(view_class, 'template_name') and hasattr(response, 'template_name'):
                         template = response.template_name[-1] if isinstance(response.template_name,
                                                                             list) else response.template_name
 
@@ -1670,7 +1670,7 @@ class GenericTestMixin(object):
                             'url': path,
                             'url pattern': url_pattern,
                             'parsed args': parsed_args,
-                            'view model': view_class.model,
+                            'view model': view_model,
                             'form class': form_class,
                             # 'form': form,
                             'form valid': is_valid,
