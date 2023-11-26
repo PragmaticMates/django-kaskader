@@ -1142,13 +1142,17 @@ class GenericTestMixin(object):
 
         self.assertFalse(self.failed, msg=pformat(self.failed, indent=4))
 
-    def crawl_urls(self, urls, parent_pattern='', parent_namespace='', parent_app_name='', filter_namespace=None, filter_app_name=None):
+    def crawl_urls(self, urls, parent_pattern='', parent_namespace='', parent_app_name='', filter_namespace=None, exclude_namespace=None, filter_app_name=None, exclude_app_name=None):
         for url in urls.url_patterns:
             if isinstance(url, URLResolver):
-                if self.PRINT_TEST_SUBJECT and (filter_namespace is None or filter_namespace == url.namespace) and (filter_app_name is None or filter_app_name == url.app_name):
-                    print('NAMESPACE', url.namespace, 'APP_NAME', url.app_name)
+                if (exclude_namespace is not None and exclude_namespace == url.namespace) or (exclude_app_name is not None and exclude_app_name == url.app_name):
+                    continue
 
-                self.crawl_urls(url, f'{parent_pattern}{url.pattern}', f"{parent_namespace}:{url.namespace or ''}", f"{parent_app_name}:{url.app_name or ''}", filter_namespace, filter_app_name)
+                if self.PRINT_TEST_SUBJECT and (filter_namespace is None or filter_namespace == url.namespace) and (filter_app_name is None or filter_app_name == url.app_name):
+                    print('NAMESPACE', url.namespace, type(url.namespace), 'APP_NAME', url.app_name)
+
+                self.crawl_urls(url, f'{parent_pattern}{url.pattern}', f"{parent_namespace}:{url.namespace or ''}", f"{parent_app_name}:{url.app_name or ''}",
+                                filter_namespace, exclude_namespace, filter_app_name, exclude_app_name)
 
             elif isinstance(url, URLPattern):
                 # print(if_none(parent_pattern) + str(url.pattern))
