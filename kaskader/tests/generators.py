@@ -57,10 +57,11 @@ except ImportError:
 from django.views.generic import CreateView, UpdateView, DeleteView
 
 # TODO: refactor: apps below are optional
-from internationalflavor import iban as if_iban
-from internationalflavor import vat_number as if_vat
-from internationalflavor import countries as if_countries
-from pragmatic import fields as pragmatic_fields
+if 'internationalflavor' in getattr(settings, 'INSTALLED_APPS'):
+    import internationalflavor
+
+if 'pragmatic' in getattr(settings, 'INSTALLED_APPS'):
+    import pragmatic
 
 if 'gm2m' in getattr(settings, 'INSTALLED_APPS'):
     from gm2m import GM2MField
@@ -137,7 +138,8 @@ class InputMixin(object):
         field values by field class used to generate objects, values can be callables with field variable,
         extend in subclass as needed
         '''
-        return {
+
+        map = {
             ForeignKey: lambda f: cls.get_generated_obj(f.related_model),
             OneToOneField: lambda f: cls.get_generated_obj(f.related_model),
             BooleanField: False,
@@ -165,10 +167,18 @@ class InputMixin(object):
             postgres_fields.ArrayField: lambda f: [cls.default_field_map()[f.base_field.__class__](f.base_field)],
             JSONField: {},
             URLField: lambda f: 'www.google.com',
-            if_countries.CountryField: 'LU',
-            if_iban.IBANField: 'LU28 0019 4006 4475 0000',
-            if_vat.VATNumberField: lambda f: 'LU{}'.format(random.randint(10000000, 99999999)),  # 'GB904447273',
         }
+
+        try:
+            map.update({
+                internationalflavor.countries.CountryField: 'LU',
+                internationalflavor.iban.IBANField: 'LU28 0019 4006 4475 0000',
+                internationalflavor.vat.VATNumberField: lambda f: 'LU{}'.format(random.randint(10000000, 99999999)),  # 'GB904447273',
+            })
+        except NameError:
+            pass
+
+        return map
 
     @classmethod
     def default_form_field_map(cls):
@@ -207,10 +217,16 @@ class InputMixin(object):
             postgres_forms.HStoreField: '',
             postgres_forms.SimpleArrayField: lambda f: [cls.default_form_field_map()[f.base_field.__class__](f.base_field)],
             postgres_forms.DateTimeRangeField: lambda f: [now().strftime(list(f.input_formats)[-1]) if hasattr(f, 'input_formats') else now(), now().strftime(list(f.input_formats)[-1]) if hasattr(f, 'input_formats') else now()],
-            if_countries.CountryFormField: 'LU',  # random.choice(UN_RECOGNIZED_COUNTRIES),
-            if_iban.IBANFormField: 'LU28 0019 4006 4475 0000',
-            if_vat.VATNumberFormField: lambda f: 'LU{}'.format(random.randint(10000000, 99999999)),  # 'GB904447273',
         }
+
+        try:
+            map.update({
+                internationalflavor.countries.CountryFormField: 'LU',  # random.choice(UN_RECOGNIZED_COUNTRIES),
+                internationalflavor.iban.IBANFormField: 'LU28 0019 4006 4475 0000',
+                internationalflavor.vat.VATNumberFormField: lambda f: 'LU{}'.format(random.randint(10000000, 99999999)),  # 'GB904447273',
+            })
+        except NameError:
+            pass
 
         try:
             map.update({django_form_fields.JSONField: ''})
@@ -220,10 +236,13 @@ class InputMixin(object):
 
         try:
             map.update({
-                pragmatic_fields.AlwaysValidChoiceField: lambda f: list(f.choices)[-1][0] if f.choices else '{}'.format(f.label),
-                pragmatic_fields.AlwaysValidMultipleChoiceField: lambda f: str(list(f.choices)[-1][0]) if f.choices else str(f.label),
-                pragmatic_fields.SliderField: lambda f: '{},{}'.format(f.min, f.max) if f.has_range else str(f.min),
+                pragmatic.fields.AlwaysValidChoiceField: lambda f: list(f.choices)[-1][0] if f.choices else '{}'.format(f.label),
+                pragmatic.fields.AlwaysValidMultipleChoiceField: lambda f: str(list(f.choices)[-1][0]) if f.choices else str(f.label),
+                pragmatic.fields.SliderField: lambda f: '{},{}'.format(f.min, f.max) if f.has_range else str(f.min),
             })
+        except NameError:
+            # pragmatic not installed
+            pass
         except AttributeError:
             # older django
             pass
