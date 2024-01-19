@@ -4,7 +4,7 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django_filters import FilterSet, CharFilter
 
-from example.models import Car
+from cars.models import Car
 
 
 class CarFilter(FilterSet):

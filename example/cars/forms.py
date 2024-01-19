@@ -4,7 +4,7 @@ from crispy_forms.bootstrap import FormActions, InlineRadios
 from crispy_forms.helper import FormHelper
 from crispy_forms.layout import Submit, Row, Layout, Fieldset
 
-from example.models import Car
+from cars.models import Car
 
 
 class CarForm(ModelForm):

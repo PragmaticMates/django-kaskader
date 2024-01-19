@@ -2,9 +2,9 @@ from django.db.models import Prefetch
 from django.urls import reverse
 from django.views.generic import ListView, CreateView
 
-from example.filters import CarFilter
-from example.forms import CarForm
-from example.models import Car, BrandModel
+from cars.filters import CarFilter
+from cars.forms import CarForm
+from cars.models import Car, BrandModel
 
 
 class CarListView(ListView):
@@ -41,4 +41,4 @@ class CarCreateView(CreateView):
         return super().form_valid(form)
 
     def get_success_url(self):
-        return reverse('car_list')
+        return reverse('cars:car_list')

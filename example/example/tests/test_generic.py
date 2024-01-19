@@ -2,15 +2,15 @@ import os
 
 from django.test import TestCase
 
-from example.models import Car
+from cars.models import Car, BrandModel, CarBrand
 from kaskader.tests.generators import GenericBaseMixin, GenericTestMixin
 
 
 class ExampleBaseMixin(GenericBaseMixin):
     PRINT_TEST_SUBJECT = True
     PRINT_SORTED_MODEL_DEPENDENCY = True
-    CHECK_MODULES = ['example']
-    EXCLUDE_MODULES = ['commands', 'migrations', 'settings', 'tests']
+    CHECK_MODULES = ['cars', 'cars']
+    EXCLUDE_MODULES = ['commands', 'migrations', 'settings', 'tests', 'cars.kaskader']
     TEST_PASSWORD = 'testpassword'
     IGNORE_MODEL_FIELDS = {
         Car: ['created', 'modified'], # specific model fields can be ignored when generating data
@@ -24,9 +24,70 @@ class ExampleBaseMixin(GenericBaseMixin):
         'rosetta-',
     ]
     GET_ONLY_URLS = [
-    ]
+    ] # ulrs that should only be tested on get request
 
-    fixtures = ['initial_data.json']
+    # fixtures = ['initial_data.json']
+
+    @classmethod
+    def setUpTestData(cls):
+        # before generating objects
+
+        # generate objects
+        super(GenericBaseMixin, cls).setUpTestData()
+
+        # after generating objects
+
+    @classmethod
+    def generate_obj(cls, model, field_values=None, **kwargs):
+        # this method is used to generate every single object, can be used for setting model-wide default values as follows
+
+        model_default_kwargs = {
+            Car: lambda cls: {
+                'color': 'BLACK',
+            },
+        }.get(model, lambda cls: {})(cls)
+
+        model_default_kwargs.update(kwargs if field_values is None else field_values(cls) if callable(field_values) else field_values)
+        return super().generate_obj(model, field_values=None, **model_default_kwargs)
+
+    @classmethod
+    def manual_model_dependency(cls):
+        # use to manually force dependency, useful especially with complex m2m relations
+        return {
+            BrandModel: {CarBrand},
+        }
+
+    @classmethod
+    def model_field_values_map(cls):
+        # default objects to genrate with specific values
+        return {
+            CarBrand: {
+                'mercedes': {
+                    'title': 'Mercedes',
+                },
+            },
+            BrandModel: {
+                'sls_amg': lambda cls: {
+                    'brand': cls.get_generated_obj(CarBrand, 'mercedes'),
+                    'title': 'SLS AMG',
+                },
+                'sprinter': lambda cls: {
+                    'brand': cls.get_generated_obj(CarBrand, 'mercedes'),
+                    'title': 'Sprinter',
+                }
+            }
+
+        }
+
+    @property
+    def url_params_map(self):
+        # default test values for specific urls
+        return {
+            'cars:car_create': {
+                'sls_amg': {'data': {'model': self.get_generated_obj(BrandModel, 'sls_amg').id}},
+                'sprinter': {'data': {'model': self.get_generated_obj(BrandModel, 'sprinter').id}},
+            },
+        }
 
 
 class ExampleTestMixin(GenericTestMixin, ExampleBaseMixin, TestCase):
