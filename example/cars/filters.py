@@ -8,7 +8,6 @@ from cars.models import Car
 
 
 class CarFilter(FilterSet):
-
     class Meta:
         model = Car
         fields = [
@@ -32,7 +31,7 @@ class CarFilter(FilterSet):
                     _('Car Model'),
                     Row(
                         Div('model__brand', css_class='col-md-6'),
-                        Div(Field('model', css_class='col-md-6'), css_class='col-md-6'),
+                        Div('model', css_class='col-md-6'),
                     ), css_class='col-md-12'
                 ),
                 Fieldset(

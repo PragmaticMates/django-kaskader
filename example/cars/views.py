@@ -1,21 +1,27 @@
 from django.db.models import Prefetch
 from django.urls import reverse
-from django.views.generic import ListView, CreateView
+from django.utils.translation import gettext_lazy as _
+from django.views.generic import ListView, CreateView, DeleteView
+from pragmatic.mixins import DisplayListViewMixin, SortingListViewMixin
 
 from cars.filters import CarFilter
 from cars.forms import CarForm
 from cars.models import Car, BrandModel
 
 
-class CarListView(ListView):
+class CarListView(DisplayListViewMixin, SortingListViewMixin, ListView):
     model = Car
     permission_required = 'cars.list_car'
+    back_url = None
+    displays = ['list']
+    sorting_options = {
+        'brand': _('model__brand'),
+        'model': _('model'),
+    }
 
     def get_queryset(self):
         queryset = self.filter.qs.select_related(
             'model'
-        ).prefetch_related(
-            Prefetch('brand', queryset=BrandModel.objects.all())
         )
         return queryset
 
@@ -39,6 +45,19 @@ class CarCreateView(CreateView):
 
     def form_valid(self, form):
         return super().form_valid(form)
+
+    def get_success_url(self):
+        return reverse('cars:car_list')
+
+    def get_back_url(self):
+        url = self.request.GET.get('back_url', self.get_success_url())
+        return url
+
+
+class CarDeleteView(DeleteView):
+    model = Car
+    form_class = CarForm
+    permission_required = 'cars.delete_car'
 
     def get_success_url(self):
         return reverse('cars:car_list')

@@ -1,8 +1,11 @@
 import os
 
 from django.test import TestCase
+from django.urls import reverse
 
+from cars.filters import CarFilter
 from cars.models import Car, BrandModel, CarBrand
+from cars.querysets import CarQuerySet
 from kaskader.tests.generators import GenericBaseMixin, GenericTestMixin
 
 
@@ -84,12 +87,42 @@ class ExampleBaseMixin(GenericBaseMixin):
         # default test values for specific urls
         return {
             'cars:car_create': {
-                'sls_amg': {'data': {'model': self.get_generated_obj(BrandModel, 'sls_amg').id}},
-                'sprinter': {'data': {'model': self.get_generated_obj(BrandModel, 'sprinter').id}},
+                'data': {'data': {'model': self.get_generated_obj(BrandModel, 'sls_amg').id}},
+                'init_form_kwargs': {'brand': self.get_generated_obj(CarBrand, 'mercedes')},
+            },
+            'cars:car_delete': {
+                'url_args': {'args': [self.get_generated_obj(Car).id]},
+                'url_kwargs': {'url_kwargs': {'pk': self.get_generated_obj(Car).id}},
+                'request_kwargs': {'kwargs': {'back_url': reverse('cars:car_create')}},
+            },
+            'cars:car_list': {
+                'sorting_options': {'sorting': 'model__brand'},
+                'display_option': {'display': 'list'},
+            }
+        }
+
+    @property
+    def queryset_params_map(self):
+        return {
+            CarQuerySet: {
+                'brand': {'brand': self.get_generated_obj(CarBrand, 'mercedes')},
+                'model': {'model': self.get_generated_obj(BrandModel, 'sls_amg')},
+            }
+        }
+
+    @property
+    def filter_params_map(self):
+        return {
+            CarFilter: {
+                'with_data': {'data': { # data is used to provide specific filter data
+                    'model__brand': self.get_generated_obj(CarBrand, 'mercedes').id,
+                    'model': self.get_generated_obj(BrandModel, 'sls_amg').id,
+                }},
+                'with_filter_init_kwargs': {'init_kwargs': {'queryset': Car.objects.all()}}, # init_kwargs are used to get Filter object before generating field values
             },
         }
 
 
-class ExampleTestMixin(GenericTestMixin, ExampleBaseMixin, TestCase):
+class ExampleTest(GenericTestMixin, ExampleBaseMixin, TestCase):
     def setUp(self):
         pass

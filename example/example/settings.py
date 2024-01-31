@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'cars',
     'django_filters',
     'crispy_forms',
+    'pragmatic',
 ]
 
 MIDDLEWARE = [

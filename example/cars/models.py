@@ -1,6 +1,8 @@
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
+from cars.querysets import CarQuerySet
+
 
 class CarBrand(models.Model):
     title = models.CharField(_(u'title'), max_length=128, unique=True)
@@ -56,12 +58,16 @@ class Car(models.Model):
     numberplate = models.CharField(max_length=16, unique=True)
     created = models.DateTimeField(_(u'created'), auto_now_add=True)
     modified = models.DateTimeField(_(u'modified'), auto_now=True)
+    objects = CarQuerySet.as_manager()
 
     def __unicode__(self):
         return u'%(brand)s %(model)s' % {
             'brand': self.brand,
             'model': self.model,
         }
+
+    def __str__(self):
+        return self.__unicode__()
 
     @property
     def brand(self):
