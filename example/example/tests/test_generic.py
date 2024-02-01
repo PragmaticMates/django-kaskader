@@ -88,12 +88,15 @@ class ExampleBaseMixin(GenericBaseMixin):
         return {
             'cars:car_create': {
                 'data': {'data': {'model': self.get_generated_obj(BrandModel, 'sls_amg').id}},
-                'init_form_kwargs': {'brand': self.get_generated_obj(CarBrand, 'mercedes')},
+                'form_kwargs': {
+                    'brand': self.get_generated_obj(CarBrand, 'mercedes'),
+                    'data': {'model': self.get_generated_obj(BrandModel, 'sls_amg').id},
+                },
             },
             'cars:car_delete': {
                 'url_args': {'args': [self.get_generated_obj(Car).id]},
                 'url_kwargs': {'url_kwargs': {'pk': self.get_generated_obj(Car).id}},
-                'request_kwargs': {'kwargs': {'back_url': reverse('cars:car_create')}},
+                'request_kwargs': {'request_kwargs': {'back_url': reverse('cars:car_create')}},
             },
             'cars:car_list': {
                 'sorting_options': {'sorting': 'model__brand'},
@@ -114,11 +117,11 @@ class ExampleBaseMixin(GenericBaseMixin):
     def filter_params_map(self):
         return {
             CarFilter: {
-                'with_data': {'data': { # data is used to provide specific filter data
+                'data': {'data': { # data is used to provide specific filter data
                     'model__brand': self.get_generated_obj(CarBrand, 'mercedes').id,
                     'model': self.get_generated_obj(BrandModel, 'sls_amg').id,
                 }},
-                'with_filter_init_kwargs': {'init_kwargs': {'queryset': Car.objects.all()}}, # init_kwargs are used to get Filter object before generating field values
+                'filter_kwargs': {'filter_kwargs': {'queryset': Car.objects.all()}}, # filter_kwargs are used to get Filter instance before generating field values
             },
         }
 

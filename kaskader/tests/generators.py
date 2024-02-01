@@ -291,31 +291,31 @@ class InputMixin(object):
         '''
         return {}
 
-    @classmethod
-    def init_form_kwargs(cls, form_class, default=None):
-        '''
-        !!! deprecated !!!
-        {
-            UserForm: {'user': cls.get_generated_obj(User)},
-        }
-        '''
-        if default is None:
-            default = {}
+    # @classmethod
+    # def init_form_kwargs(cls, form_class, default=None):
+    #     '''
+    #     !!! deprecated !!!
+    #     {
+    #         UserForm: {'user': cls.get_generated_obj(User)},
+    #     }
+    #     '''
+    #     if default is None:
+    #         default = {}
+    #
+    #     return {}.get(form_class, cls.generate_func_args(form_class.__init__, default=default))
 
-        return {}.get(form_class, cls.generate_func_args(form_class.__init__, default=default))
-
-    @classmethod
-    def init_filter_kwargs(cls, filter_class, default=None):
-        '''
-        !!! deprecated !!!
-        {
-            UserFitler: {'queryset': User.objects.all()}
-        }
-        '''
-        if default is None:
-            default = {}
-
-        return {}.get(filter_class, cls.generate_func_args(filter_class.__init__, default=default))
+    # @classmethod
+    # def init_filter_kwargs(cls, filter_class, default=None):
+    #     '''
+    #     !!! deprecated !!!
+    #     {
+    #         UserFitler: {'queryset': User.objects.all()}
+    #     }
+    #     '''
+    #     if default is None:
+    #         default = {}
+    #
+    #     return {}.get(filter_class, cls.generate_func_args(filter_class.__init__, default=default))
 
 
 class BaseMixin(object):
@@ -829,9 +829,13 @@ class GenericBaseMixin(InputMixin, BaseMixin):
 
     @classmethod
     def generate_form_data(cls, form, default_data):
+        """
+        form should be an instance, not class
+        """
         if inspect.isclass(form):
             # if class is passed try to get instance
-            form = form(**cls.init_form_kwargs(form, {}))
+            # form = form(**cls.init_form_kwargs(form, {}))
+            raise ValueError('form should be an instance not class')
 
         data = {}
 
@@ -961,6 +965,10 @@ class GenericBaseMixin(InputMixin, BaseMixin):
 
     @classmethod
     def generate_obj(cls, model, field_values=None, **kwargs):
+        '''
+        generates and returns object for given model and field values,
+        this method is used to generate every single object
+        '''
         if field_values is None:
             # use kwargs for values if dict is not passed
             if not kwargs:
@@ -1003,6 +1011,9 @@ class GenericBaseMixin(InputMixin, BaseMixin):
 
     @classmethod
     def get_generated_obj(cls, model=None, obj_name=None):
+        '''
+        returns already generated object of given model and/or obj_name if exists otherwise generates first
+        '''
         if model is None and obj_name is None:
             raise Exception('At least one argument is necessary')
 
@@ -1410,11 +1421,11 @@ class GenericTestMixin(object):
             }))
         else:
             path = reverse(path_name, kwargs=parsed_kwargs)
-            kwargs = params_map.get('kwargs', {})
+            request_kwargs = params_map.get('request_kwargs', {})
 
-            if kwargs:
-                kwargs = '&'.join([f'{key}={value}' for key, value in kwargs.items()])
-                path = f'{path}?{kwargs}'
+            if request_kwargs:
+                request_kwargs = '&'.join([f'{key}={value}' for key, value in request_kwargs.items()])
+                path = f'{path}?{request_kwargs}'
 
         return path, parsed_kwargs, fails
 
@@ -1535,7 +1546,8 @@ class GenericTestMixin(object):
 
                 # view_model = view_class.model if hasattr(view_class, 'model') else form_class.model if hasattr(
                 #     form_class, 'model') else None
-                form_kwargs = params_map.get('form_kwargs', self.generate_func_args(form_class.__init__))
+                # refactor form kwargs?
+                form_kwargs = self.generate_func_args(form_class.__init__, params_map.get('form_kwargs', {}))
                 form_kwargs = {key: value(self) if callable(value) else value for key, value in form_kwargs.items()}
                 form_kwargs['data'] = data
                 form = None
@@ -1543,10 +1555,8 @@ class GenericTestMixin(object):
                 if path_name not in self.POST_ONLY_URLS and 'form' in get_response.context:
                     form = get_response.context['form']
                 else:
-                    init_form_kwargs = self.init_form_kwargs(form_class, default=params_map.get('init_form_kwargs', {}))
-
                     try:
-                        form = form_class(**init_form_kwargs)
+                        form = form_class(**form_kwargs)
                     except Exception as e:
                         if not isinstance(form, form_class) or not hasattr(form, 'fields'):
                             # as long as there is form instance with fields its enough to generate data
@@ -1557,7 +1567,7 @@ class GenericTestMixin(object):
                                 'url pattern': url_pattern,
                                 'parsed args': parsed_args,
                                 'form class': form_class,
-                                'form kwargs': init_form_kwargs,
+                                'form kwargs': form_kwargs,
                                 'traceback': traceback.format_exc()
                             }))
                             return fails
@@ -1814,15 +1824,15 @@ class GenericTestMixin(object):
             params_maps = self.filter_params_map.get(filter_class, {'default': {}})
 
             for map_name, params_map in params_maps.items():
-                init_kwargs = self.init_filter_kwargs(filter_class, default=params_map.get('init_kwargs', {}))
+                filter_kwargs = self.generate_func_args(filter_class.__init__, params_map.get('filter_kwargs', {}))
 
                 try:
-                    filter = filter_class(**init_kwargs)
+                    filter = filter_class(**filter_kwargs)
                 except:
                     failed.append(OrderedDict({
                         'location': 'FILTER INIT',
                         'filter class': filter_class,
-                        'init_kwargs': init_kwargs,
+                        'init_kwargs': filter_kwargs,
                         'params map': params_map,
                         'traceback': traceback.format_exc()
                     }))
@@ -1840,10 +1850,9 @@ class GenericTestMixin(object):
                         'params map': params_map,
                         'traceback': traceback.format_exc()
                     }))
-                    continue
 
                 try:
-                    queryset = init_kwargs.get('queryset', filter_class._meta.model._default_manager.all() if filter_class._meta.model else None)
+                    queryset = filter_kwargs.get('queryset', filter_class._meta.model._default_manager.all() if filter_class._meta.model else None)
                 except Exception as e:
                     failed.append(OrderedDict({
                         'location': 'FILTER QUERYSET',
@@ -1854,10 +1863,10 @@ class GenericTestMixin(object):
                     continue
 
                 if queryset:
-                    init_kwargs['queryset'] = queryset
+                    filter_kwargs['queryset'] = queryset
 
                 try:
-                    filter = filter_class(data=query_dict_data, **init_kwargs)
+                    filter = filter_class(data=query_dict_data, **filter_kwargs)
                     qs = filter.qs.all().values()
                 except Exception as e:
                     failed.append(OrderedDict({
