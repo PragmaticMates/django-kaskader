@@ -58,7 +58,7 @@ from django.views.generic import CreateView, UpdateView, DeleteView
 
 # TODO: refactor: apps below are optional
 if 'internationalflavor' in getattr(settings, 'INSTALLED_APPS'):
-    import internationalflavor
+    from internationalflavor import iban as intflavor_iban, countries as intflavor_countries, vat_number as intflavor_vat
 
 if 'pragmatic' in getattr(settings, 'INSTALLED_APPS'):
     import pragmatic
@@ -172,9 +172,9 @@ class InputMixin(object):
 
         try:
             map.update({
-                internationalflavor.countries.CountryField: 'LU',
-                internationalflavor.iban.IBANField: 'LU28 0019 4006 4475 0000',
-                internationalflavor.vat.VATNumberField: lambda f: 'LU{}'.format(random.randint(10000000, 99999999)),  # 'GB904447273',
+                intflavor_countries.CountryField: 'LU',
+                intflavor_iban.IBANField: 'LU28 0019 4006 4475 0000',
+                intflavor_vat.VATNumberField: lambda f: 'LU{}'.format(random.randint(10000000, 99999999)),  # 'GB904447273',
             })
         except NameError:
             pass
@@ -222,9 +222,9 @@ class InputMixin(object):
 
         try:
             map.update({
-                internationalflavor.countries.CountryFormField: 'LU',  # random.choice(UN_RECOGNIZED_COUNTRIES),
-                internationalflavor.iban.IBANFormField: 'LU28 0019 4006 4475 0000',
-                internationalflavor.vat.VATNumberFormField: lambda f: 'LU{}'.format(random.randint(10000000, 99999999)),  # 'GB904447273',
+                intflavor_countries.CountryFormField: 'LU',  # random.choice(UN_RECOGNIZED_COUNTRIES),
+                intflavor_iban.IBANFormField: 'LU28 0019 4006 4475 0000',
+                intflavor_vat.VATNumberFormField: lambda f: 'LU{}'.format(random.randint(10000000, 99999999)),  # 'GB904447273',
             })
         except NameError:
             pass
