@@ -291,8 +291,9 @@ class InputMixin(object):
         '''
         return {}
 
-    # @classmethod
-    # def init_form_kwargs(cls, form_class, default=None):
+    @classmethod
+    def init_form_kwargs(cls, form_class, default=None):
+        raise AttributeError('init_form_kwargs has been deprecated, use form_kwargs value in url_params_map tests instead')
     #     '''
     #     !!! deprecated !!!
     #     {
@@ -304,8 +305,10 @@ class InputMixin(object):
     #
     #     return {}.get(form_class, cls.generate_func_args(form_class.__init__, default=default))
 
-    # @classmethod
-    # def init_filter_kwargs(cls, filter_class, default=None):
+    @classmethod
+    def init_filter_kwargs(cls, filter_class, default=None):
+        raise AttributeError('init_filter_kwargs has been deprecated, se filter_kwargs value in filter_params_map instead')
+
     #     '''
     #     !!! deprecated !!!
     #     {
@@ -1832,7 +1835,7 @@ class GenericTestMixin(object):
                     failed.append(OrderedDict({
                         'location': 'FILTER INIT',
                         'filter class': filter_class,
-                        'init_kwargs': filter_kwargs,
+                        'filter_kwargs': filter_kwargs,
                         'params map': params_map,
                         'traceback': traceback.format_exc()
                     }))
