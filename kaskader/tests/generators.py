@@ -1192,7 +1192,9 @@ class GenericTestMixin(object):
                     self.crawl_urls_action(url, parent_pattern, parent_namespace, parent_app_name)
 
     def crawl_urls_action(self, url, parent_pattern, parent_namespace, parent_app_name):
-        url_name = f"{parent_namespace}:{url.name or ''}".lstrip(':')
+        parent_namespace = parent_namespace.strip(':')
+        url_name = f"{parent_namespace}:{url.name or ''}"
+        url_name = url_name.strip(':')
         pattern = f'{parent_pattern}{url.pattern}'
         args = re.findall(r'<([:\w]+)>', pattern)
 
