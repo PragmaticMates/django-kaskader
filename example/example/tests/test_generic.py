@@ -58,6 +58,7 @@ class ExampleBaseMixin(GenericBaseMixin):
     def manual_model_dependency(cls):
         # use to manually force dependency, useful especially with complex m2m relations
         return {
+            User: {}, # empty set just to add User mdoel to dependency manually without whole module
             BrandModel: {CarBrand},
         }
 

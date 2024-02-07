@@ -590,11 +590,6 @@ class BaseMixin(object):
                     if dependency not in models:
                         models.append(dependency)
 
-        if hasattr(cls, 'model_field_values_map'):
-            for model in cls.model_field_values_map().keys():
-                if model not in models:
-                    models.append(model)
-
         return models
 
     @classmethod
@@ -643,7 +638,8 @@ class BaseMixin(object):
 
         # add manualy set dependencies
         for model, relations in cls.manual_model_dependency().items():
-            dependency[model]['required'] |= relations
+            if relations:
+                dependency[model]['required'] |= relations
 
         # add deeper level dependencies
         for i in range(2):
