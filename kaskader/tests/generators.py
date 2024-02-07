@@ -580,6 +580,21 @@ class BaseMixin(object):
         for app in proxied_apps:
             models.extend([model for model in app.get_models() if model not in models])
 
+        # add missing models manually provided
+        if hasattr(cls, 'manual_model_dependency'):
+            for model, dependencies in cls.manual_model_dependency().items():
+                if model not in models:
+                    models.append(model)
+
+                for dependency in dependencies:
+                    if dependency not in models:
+                        models.append(dependency)
+
+        if hasattr(cls, 'model_field_values_map'):
+            for model in cls.model_field_values_map().keys():
+                if model not in models:
+                    models.append(model)
+
         return models
 
     @classmethod
