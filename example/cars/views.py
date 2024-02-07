@@ -1,3 +1,4 @@
+from django.contrib.auth.mixins import PermissionRequiredMixin
 from django.db.models import Prefetch
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
@@ -38,7 +39,7 @@ class CarListView(DisplayListViewMixin, SortingListViewMixin, ListView):
         return context_data
 
 
-class CarCreateView(CreateView):
+class CarCreateView(PermissionRequiredMixin, CreateView):
     model = Car
     form_class = CarForm
     permission_required = 'cars.add_car'
@@ -54,7 +55,7 @@ class CarCreateView(CreateView):
         return url
 
 
-class CarDeleteView(DeleteView):
+class CarDeleteView(PermissionRequiredMixin, DeleteView):
     model = Car
     form_class = CarForm
     permission_required = 'cars.delete_car'

@@ -92,6 +92,7 @@ class ExampleBaseMixin(GenericBaseMixin):
                     'brand': self.get_generated_obj(CarBrand, 'mercedes'),
                     'data': {'model': self.get_generated_obj(BrandModel, 'sls_amg').id},
                 },
+                'permissions': ['cars.add_car', 'superuser'],
             },
             'cars:car_delete': {
                 'url_args': {'args': [self.get_generated_obj(Car).id]},

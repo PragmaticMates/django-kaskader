@@ -18,6 +18,7 @@ from django import urls
 from django.apps import apps
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Permission
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.gis.db import models as gis_models
 from django.contrib.gis import forms as gis_forms
@@ -1251,6 +1252,21 @@ class GenericTestMixin(object):
                 initial_cookies = self.client.cookies
                 self.client.cookies.load(cookies)
 
+            # set permissions
+            permissions = params_map.get('permissions', None)
+
+            if permissions is not None:
+                initial_permissions = self.user.user_permissions.all().values('id')
+
+                for permission in permissions:
+                    if permission == 'is_superuser':
+                        self.user.is_superuser = True
+                        self.user.save(update_fields=['is_superuser'])
+                    else:
+                        app_label, codename = permission.split('.')
+                        permission = Permission.objects.get(content_type__app_label=app_label, codename=codename)
+                        self.user.user_permissions.add(permission)
+
             # GET url
             if hasattr(view_class, 'get') and not url_name in self.POST_ONLY_URLS:
                 get_response, fails = self.get_url_test(url_name, path, parsed_args, pattern, view_class, params_map)
@@ -1270,6 +1286,10 @@ class GenericTestMixin(object):
             # reset cookies
             if cookies is not None:
                 self.client.cookies = initial_cookies
+
+            # reset permissions
+            if permissions is not None:
+                self.user.user_permissions.set(Permission.objects.filter(id__in=initial_permissions))
 
     def prepare_url(self, path_name, path_params, params_map, models, fields):
         '''
@@ -1684,11 +1704,6 @@ class GenericTestMixin(object):
                             # recreate obj is not necessary because of transaction rollback
 
                     except Exception as e:
-                        # for key, value in init_form_kwargs.items():
-                        #     if key not in form_kwargs:
-                        #         form_kwargs[key] = value
-
-                        # form = form_class(**form_kwargs)
                         form = response.context.get('form', None)
                         errors = [form.errors if form else None]
                         is_valid = [form.is_valid() if form else None]
@@ -1737,7 +1752,7 @@ class GenericTestMixin(object):
         for qs in models_querysets:
             qs_class = qs.__class__
 
-            if not qs_class == QuerySet:
+            if not qs_class == QuerySet and not any([exclude_module in qs_class.__module__ for exclude_module in self.EXCLUDE_MODULES]):
                 qs_class_label = qs_class.__name__
                 queryset_methods = [(name, func) for name, func in qs_class.__dict__.items()
                                     if not name.startswith('_')
