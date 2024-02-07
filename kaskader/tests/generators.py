@@ -292,35 +292,6 @@ class InputMixin(object):
         '''
         return {}
 
-    @classmethod
-    def init_form_kwargs(cls, form_class, default=None):
-        raise AttributeError('init_form_kwargs has been deprecated, use form_kwargs value in url_params_map tests instead')
-    #     '''
-    #     !!! deprecated !!!
-    #     {
-    #         UserForm: {'user': cls.get_generated_obj(User)},
-    #     }
-    #     '''
-    #     if default is None:
-    #         default = {}
-    #
-    #     return {}.get(form_class, cls.generate_func_args(form_class.__init__, default=default))
-
-    @classmethod
-    def init_filter_kwargs(cls, filter_class, default=None):
-        raise AttributeError('init_filter_kwargs has been deprecated, se filter_kwargs value in filter_params_map instead')
-
-    #     '''
-    #     !!! deprecated !!!
-    #     {
-    #         UserFitler: {'queryset': User.objects.all()}
-    #     }
-    #     '''
-    #     if default is None:
-    #         default = {}
-    #
-    #     return {}.get(filter_class, cls.generate_func_args(filter_class.__init__, default=default))
-
 
 class BaseMixin(object):
     @classmethod
@@ -837,8 +808,6 @@ class GenericBaseMixin(InputMixin, BaseMixin):
         form should be an instance, not class
         """
         if inspect.isclass(form):
-            # if class is passed try to get instance
-            # form = form(**cls.init_form_kwargs(form, {}))
             raise ValueError('form should be an instance not class')
 
         data = {}
