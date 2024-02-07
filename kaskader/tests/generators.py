@@ -18,6 +18,7 @@ from django import urls
 from django.apps import apps
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Permission
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.gis.db import models as gis_models
 from django.contrib.gis import forms as gis_forms
@@ -57,10 +58,11 @@ except ImportError:
 from django.views.generic import CreateView, UpdateView, DeleteView
 
 # TODO: refactor: apps below are optional
-from internationalflavor import iban as if_iban
-from internationalflavor import vat_number as if_vat
-from internationalflavor import countries as if_countries
-from pragmatic import fields as pragmatic_fields
+if 'internationalflavor' in getattr(settings, 'INSTALLED_APPS'):
+    from internationalflavor import iban as intflavor_iban, countries as intflavor_countries, vat_number as intflavor_vat
+
+if 'pragmatic' in getattr(settings, 'INSTALLED_APPS'):
+    import pragmatic
 
 if 'gm2m' in getattr(settings, 'INSTALLED_APPS'):
     from gm2m import GM2MField
@@ -137,7 +139,8 @@ class InputMixin(object):
         field values by field class used to generate objects, values can be callables with field variable,
         extend in subclass as needed
         '''
-        return {
+
+        map = {
             ForeignKey: lambda f: cls.get_generated_obj(f.related_model),
             OneToOneField: lambda f: cls.get_generated_obj(f.related_model),
             BooleanField: False,
@@ -161,14 +164,23 @@ class InputMixin(object):
             FloatField: lambda f: cls.get_num_field_mock_value(f),
             ImageField: lambda f: cls.get_image_file_mock(),
             GenericIPAddressField: '127.0.0.1',
-            postgres_fields.JSONField: {},
+            postgres_fields.JSONField: {'key': 'value'},
+            postgres_fields.HStoreField: {'key': 'value'},
             postgres_fields.ArrayField: lambda f: [cls.default_field_map()[f.base_field.__class__](f.base_field)],
             JSONField: {},
             URLField: lambda f: 'www.google.com',
-            if_countries.CountryField: 'LU',
-            if_iban.IBANField: 'LU28 0019 4006 4475 0000',
-            if_vat.VATNumberField: lambda f: 'LU{}'.format(random.randint(10000000, 99999999)),  # 'GB904447273',
         }
+
+        try:
+            map.update({
+                intflavor_countries.CountryField: 'LU',
+                intflavor_iban.IBANField: 'LU28 0019 4006 4475 0000',
+                intflavor_vat.VATNumberField: lambda f: 'LU{}'.format(random.randint(10000000, 99999999)),  # 'GB904447273',
+            })
+        except NameError:
+            pass
+
+        return map
 
     @classmethod
     def default_form_field_map(cls):
@@ -207,10 +219,16 @@ class InputMixin(object):
             postgres_forms.HStoreField: '',
             postgres_forms.SimpleArrayField: lambda f: [cls.default_form_field_map()[f.base_field.__class__](f.base_field)],
             postgres_forms.DateTimeRangeField: lambda f: [now().strftime(list(f.input_formats)[-1]) if hasattr(f, 'input_formats') else now(), now().strftime(list(f.input_formats)[-1]) if hasattr(f, 'input_formats') else now()],
-            if_countries.CountryFormField: 'LU',  # random.choice(UN_RECOGNIZED_COUNTRIES),
-            if_iban.IBANFormField: 'LU28 0019 4006 4475 0000',
-            if_vat.VATNumberFormField: lambda f: 'LU{}'.format(random.randint(10000000, 99999999)),  # 'GB904447273',
         }
+
+        try:
+            map.update({
+                intflavor_countries.CountryFormField: 'LU',  # random.choice(UN_RECOGNIZED_COUNTRIES),
+                intflavor_iban.IBANFormField: 'LU28 0019 4006 4475 0000',
+                intflavor_vat.VATNumberFormField: lambda f: 'LU{}'.format(random.randint(10000000, 99999999)),  # 'GB904447273',
+            })
+        except NameError:
+            pass
 
         try:
             map.update({django_form_fields.JSONField: ''})
@@ -220,10 +238,13 @@ class InputMixin(object):
 
         try:
             map.update({
-                pragmatic_fields.AlwaysValidChoiceField: lambda f: list(f.choices)[-1][0] if f.choices else '{}'.format(f.label),
-                pragmatic_fields.AlwaysValidMultipleChoiceField: lambda f: str(list(f.choices)[-1][0]) if f.choices else str(f.label),
-                pragmatic_fields.SliderField: lambda f: '{},{}'.format(f.min, f.max) if f.has_range else str(f.min),
+                pragmatic.fields.AlwaysValidChoiceField: lambda f: list(f.choices)[-1][0] if f.choices else '{}'.format(f.label),
+                pragmatic.fields.AlwaysValidMultipleChoiceField: lambda f: str(list(f.choices)[-1][0]) if f.choices else str(f.label),
+                pragmatic.fields.SliderField: lambda f: '{},{}'.format(f.min, f.max) if f.has_range else str(f.min),
             })
+        except NameError:
+            # pragmatic not installed
+            pass
         except AttributeError:
             # older django
             pass
@@ -270,32 +291,6 @@ class InputMixin(object):
         }
         '''
         return {}
-
-    @classmethod
-    def init_form_kwargs(cls, form_class, default=None):
-        '''
-        !!! deprecated !!!
-        {
-            UserForm: {'user': cls.get_generated_obj(User)},
-        }
-        '''
-        if default is None:
-            default = {}
-
-        return {}.get(form_class, cls.generate_func_args(form_class.__init__, default=default))
-
-    @classmethod
-    def init_filter_kwargs(cls, filter_class, default=None):
-        '''
-        !!! deprecated !!!
-        {
-            UserFitler: {'queryset': User.objects.all()}
-        }
-        '''
-        if default is None:
-            default = {}
-
-        return {}.get(filter_class, cls.generate_func_args(filter_class.__init__, default=default))
 
 
 class BaseMixin(object):
@@ -585,6 +580,16 @@ class BaseMixin(object):
         for app in proxied_apps:
             models.extend([model for model in app.get_models() if model not in models])
 
+        # add missing models manually provided
+        if hasattr(cls, 'manual_model_dependency'):
+            for model, dependencies in cls.manual_model_dependency().items():
+                if model not in models:
+                    models.append(model)
+
+                for dependency in dependencies:
+                    if dependency not in models:
+                        models.append(dependency)
+
         return models
 
     @classmethod
@@ -633,7 +638,8 @@ class BaseMixin(object):
 
         # add manualy set dependencies
         for model, relations in cls.manual_model_dependency().items():
-            dependency[model]['required'] |= relations
+            if relations:
+                dependency[model]['required'] |= relations
 
         # add deeper level dependencies
         for i in range(2):
@@ -809,9 +815,11 @@ class GenericBaseMixin(InputMixin, BaseMixin):
 
     @classmethod
     def generate_form_data(cls, form, default_data):
+        """
+        form should be an instance, not class
+        """
         if inspect.isclass(form):
-            # if class is passed try to get instance
-            form = form(**cls.init_form_kwargs(form, {}))
+            raise ValueError('form should be an instance not class')
 
         data = {}
 
@@ -941,6 +949,10 @@ class GenericBaseMixin(InputMixin, BaseMixin):
 
     @classmethod
     def generate_obj(cls, model, field_values=None, **kwargs):
+        '''
+        generates and returns object for given model and field values,
+        this method is used to generate every single object
+        '''
         if field_values is None:
             # use kwargs for values if dict is not passed
             if not kwargs:
@@ -983,6 +995,9 @@ class GenericBaseMixin(InputMixin, BaseMixin):
 
     @classmethod
     def get_generated_obj(cls, model=None, obj_name=None):
+        '''
+        returns already generated object of given model and/or obj_name if exists otherwise generates first
+        '''
         if model is None and obj_name is None:
             raise Exception('At least one argument is necessary')
 
@@ -1217,6 +1232,21 @@ class GenericTestMixin(object):
                 initial_cookies = self.client.cookies
                 self.client.cookies.load(cookies)
 
+            # set permissions
+            permissions = params_map.get('permissions', None)
+
+            if permissions is not None:
+                initial_permissions = self.user.user_permissions.all().values('id')
+
+                for permission in permissions:
+                    if permission == 'is_superuser':
+                        self.user.is_superuser = True
+                        self.user.save(update_fields=['is_superuser'])
+                    else:
+                        app_label, codename = permission.split('.')
+                        permission = Permission.objects.get(content_type__app_label=app_label, codename=codename)
+                        self.user.user_permissions.add(permission)
+
             # GET url
             if hasattr(view_class, 'get') and not url_name in self.POST_ONLY_URLS:
                 get_response, fails = self.get_url_test(url_name, path, parsed_args, pattern, view_class, params_map)
@@ -1236,6 +1266,10 @@ class GenericTestMixin(object):
             # reset cookies
             if cookies is not None:
                 self.client.cookies = initial_cookies
+
+            # reset permissions
+            if permissions is not None:
+                self.user.user_permissions.set(Permission.objects.filter(id__in=initial_permissions))
 
     def prepare_url(self, path_name, path_params, params_map, models, fields):
         '''
@@ -1392,11 +1426,11 @@ class GenericTestMixin(object):
             }))
         else:
             path = reverse(path_name, kwargs=parsed_kwargs)
-            kwargs = params_map.get('kwargs', {})
+            request_kwargs = params_map.get('request_kwargs', {})
 
-            if kwargs:
-                kwargs = '&'.join([f'{key}={value}' for key, value in kwargs.items()])
-                path = f'{path}?{kwargs}'
+            if request_kwargs:
+                request_kwargs = '&'.join([f'{key}={value}' for key, value in request_kwargs.items()])
+                path = f'{path}?{request_kwargs}'
 
         return path, parsed_kwargs, fails
 
@@ -1517,7 +1551,8 @@ class GenericTestMixin(object):
 
                 # view_model = view_class.model if hasattr(view_class, 'model') else form_class.model if hasattr(
                 #     form_class, 'model') else None
-                form_kwargs = params_map.get('form_kwargs', self.generate_func_args(form_class.__init__))
+                # refactor form kwargs?
+                form_kwargs = self.generate_func_args(form_class.__init__, params_map.get('form_kwargs', {}))
                 form_kwargs = {key: value(self) if callable(value) else value for key, value in form_kwargs.items()}
                 form_kwargs['data'] = data
                 form = None
@@ -1525,10 +1560,8 @@ class GenericTestMixin(object):
                 if path_name not in self.POST_ONLY_URLS and 'form' in get_response.context:
                     form = get_response.context['form']
                 else:
-                    init_form_kwargs = self.init_form_kwargs(form_class, default=params_map.get('init_form_kwargs', {}))
-
                     try:
-                        form = form_class(**init_form_kwargs)
+                        form = form_class(**form_kwargs)
                     except Exception as e:
                         if not isinstance(form, form_class) or not hasattr(form, 'fields'):
                             # as long as there is form instance with fields its enough to generate data
@@ -1539,7 +1572,7 @@ class GenericTestMixin(object):
                                 'url pattern': url_pattern,
                                 'parsed args': parsed_args,
                                 'form class': form_class,
-                                'form kwargs': init_form_kwargs,
+                                'form kwargs': form_kwargs,
                                 'traceback': traceback.format_exc()
                             }))
                             return fails
@@ -1651,11 +1684,6 @@ class GenericTestMixin(object):
                             # recreate obj is not necessary because of transaction rollback
 
                     except Exception as e:
-                        # for key, value in init_form_kwargs.items():
-                        #     if key not in form_kwargs:
-                        #         form_kwargs[key] = value
-
-                        # form = form_class(**form_kwargs)
                         form = response.context.get('form', None)
                         errors = [form.errors if form else None]
                         is_valid = [form.is_valid() if form else None]
@@ -1704,7 +1732,7 @@ class GenericTestMixin(object):
         for qs in models_querysets:
             qs_class = qs.__class__
 
-            if not qs_class == QuerySet:
+            if not qs_class == QuerySet and not any([exclude_module in qs_class.__module__ for exclude_module in self.EXCLUDE_MODULES]):
                 qs_class_label = qs_class.__name__
                 queryset_methods = [(name, func) for name, func in qs_class.__dict__.items()
                                     if not name.startswith('_')
@@ -1796,15 +1824,15 @@ class GenericTestMixin(object):
             params_maps = self.filter_params_map.get(filter_class, {'default': {}})
 
             for map_name, params_map in params_maps.items():
-                init_kwargs = self.init_filter_kwargs(filter_class, default=params_map.get('init_kwargs', {}))
+                filter_kwargs = self.generate_func_args(filter_class.__init__, params_map.get('filter_kwargs', {}))
 
                 try:
-                    filter = filter_class(**init_kwargs)
+                    filter = filter_class(**filter_kwargs)
                 except:
                     failed.append(OrderedDict({
                         'location': 'FILTER INIT',
                         'filter class': filter_class,
-                        'init_kwargs': init_kwargs,
+                        'filter_kwargs': filter_kwargs,
                         'params map': params_map,
                         'traceback': traceback.format_exc()
                     }))
@@ -1822,10 +1850,9 @@ class GenericTestMixin(object):
                         'params map': params_map,
                         'traceback': traceback.format_exc()
                     }))
-                    continue
 
                 try:
-                    queryset = init_kwargs.get('queryset', filter_class._meta.model._default_manager.all() if filter_class._meta.model else None)
+                    queryset = filter_kwargs.get('queryset', filter_class._meta.model._default_manager.all() if filter_class._meta.model else None)
                 except Exception as e:
                     failed.append(OrderedDict({
                         'location': 'FILTER QUERYSET',
@@ -1836,10 +1863,10 @@ class GenericTestMixin(object):
                     continue
 
                 if queryset:
-                    init_kwargs['queryset'] = queryset
+                    filter_kwargs['queryset'] = queryset
 
                 try:
-                    filter = filter_class(data=query_dict_data, **init_kwargs)
+                    filter = filter_class(data=query_dict_data, **filter_kwargs)
                     qs = filter.qs.all().values()
                 except Exception as e:
                     failed.append(OrderedDict({

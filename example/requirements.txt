@@ -1,0 +1,6 @@
+better-exceptions==0.3.3
+Django==4.2.3
+psycopg==3.1.14
+django-filter==2.4.0
+django-crispy-forms==1.13.0
+-e git+https://github.com/PragmaticMates/django-pragmatic.git@2d18e29fc90a1a063d34414bd3a0cd72350dbfe4#egg=django-pragmatic
