@@ -41,6 +41,7 @@ from django.http import QueryDict
 from django.test import RequestFactory
 from django.urls import reverse, URLResolver, URLPattern, get_resolver
 from django.utils.timezone import now
+from requests import Response
 
 try:
     from django.db.models import JSONField
@@ -1112,6 +1113,10 @@ class GenericBaseMixin(InputMixin, BaseMixin):
     @classmethod
     def create_formset_post_data(cls, response, post_data={}):
         post_data = dict(**post_data)
+
+        if not hasattr(response, 'context'):
+            return post_data
+
         formset_keys = [key for key in response.context.keys() if 'formset' in key and response.context[key]]
 
         for formset_key in formset_keys:
@@ -1254,6 +1259,8 @@ class GenericTestMixin(object):
                 if fails:
                     self.failed.extend(fails)
                     continue
+            else:
+                get_response = Response()
 
             # POST url
             if hasattr(view_class, 'post') and url_name not in self.GET_ONLY_URLS and getattr(view_class, 'form_class', None):
@@ -1557,7 +1564,7 @@ class GenericTestMixin(object):
                 form_kwargs['data'] = data
                 form = None
 
-                if path_name not in self.POST_ONLY_URLS and 'form' in get_response.context:
+                if path_name not in self.POST_ONLY_URLS and hasattr(get_response, 'context') and 'form' in get_response.context:
                     form = get_response.context['form']
                 else:
                     try:
