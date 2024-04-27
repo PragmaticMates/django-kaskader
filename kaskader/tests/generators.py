@@ -253,7 +253,6 @@ class InputMixin(object):
 
         return map
 
-
     @property
     def url_params_map(self):
         '''{
@@ -285,7 +284,7 @@ class InputMixin(object):
     def filter_params_map(self):
         '''{
             'UserFilterSet: {
-                'init_kwargs': {},
+                'filter_kwargs': {},
                 'data': {},
                 'queryset': User.objects.all(), # optional
             },
