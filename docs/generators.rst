@@ -32,7 +32,7 @@ Generating objects
 :strong:`generate_obj(model, field_values=None, **kwargs)` generates obj for given model with values given in kwargs, field values are deprecated.
 
 Generic tests
-^^^^^^^^^^^^^
+-------------
 
 **GenericTestMixin** provides basic tests for urls, filters and querysets:
 
@@ -43,15 +43,15 @@ Generic tests
     **def test_filters()** finds subclasses of FilterSet and calls filtered queryset for generated form data
 
 Miscellaneous
-^^^^^^^^^^^^^
+-------------
 
 missing_tests.py
-""""""""""""""""
+^^^^^^^^^^^^^^^^
 
 **class MissingTestMixin(GenericBaseMixin)** checks missing tests for signals, permissions, custom filter methods and managers. Test names must use specific pattern to be recognised.
 
 mixins.py
-"""""""""
+^^^^^^^^^
 
 Contains potentially helpful mixins for various manual tests.
 
