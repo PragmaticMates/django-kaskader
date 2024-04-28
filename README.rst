@@ -10,7 +10,7 @@ Requirements
 Some utilities require additional libraries as:
 
 - django-pragmatic
-- djnago-filter
+- django-filter
 - better-exceptions
 
 Installation

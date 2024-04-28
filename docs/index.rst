@@ -28,7 +28,7 @@ Installation
 
 Usage
 -----
-Subclass GenericBaseMixin and GenericTestMixin in your TestCase class, setup inputs from InputMixin as needed and run test command, generic tests for discovered urls, filters and querysets will be included.
+Subclass *GenericBaseMixin* and *GenericTestMixin* in your *TestCase* class, setup inputs from InputMixin as needed and run test command, generic tests for discovered urls, filters and querysets will be included.
 
 
 .. toctree::
@@ -37,3 +37,4 @@ Subclass GenericBaseMixin and GenericTestMixin in your TestCase class, setup inp
    Home <self>
    inputs
    exceptions
+   generators

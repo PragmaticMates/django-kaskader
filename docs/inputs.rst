@@ -1,10 +1,10 @@
 Inputs
-==========
+======
 
-All variables and methods for input purposes are in *InputMixin*
+All variables and methods for input purposes are in *InputMixin* class
 
-Atributes
----------
+Attributes
+----------
 
 **CHECK_MODULES** - list of modules which should be included, eg *[myapp]*, or more specifically *[myapp.core, myapp.subapp1]*
 
