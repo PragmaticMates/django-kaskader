@@ -1306,8 +1306,11 @@ class UrlMixin(object):
     default_url_params = {}
 
     @classmethod
-    def crawl_urls_with_action(cls, urls, action, parent_pattern='', parent_namespace='', parent_app_name='', filter_namespace=None, exclude_namespace=None, filter_app_name=None, exclude_app_name=None):
-        for url in urls.url_patterns:
+    def crawl_urls_with_action(cls, urls, action, parent_pattern='', parent_namespace='', parent_app_name='', filter_namespace=None, exclude_namespace=None, filter_app_name=None, exclude_app_name=None, target_attr='_urls'):
+        if isinstance(urls, URLResolver):
+            urls = urls.url_patterns
+
+        for url in urls:
             if isinstance(url, URLResolver):
                 if (exclude_namespace is not None and exclude_namespace == url.namespace) or (
                         exclude_app_name is not None and exclude_app_name == url.app_name):
@@ -1320,23 +1323,61 @@ class UrlMixin(object):
                 cls.crawl_urls_with_action(url, action, f'{parent_pattern}{url.pattern}',
                                            f"{parent_namespace}:{url.namespace or ''}",
                                            f"{parent_app_name}:{url.app_name or ''}",
-                                           filter_namespace, exclude_namespace, filter_app_name, exclude_app_name)
+                                           filter_namespace, exclude_namespace, filter_app_name, exclude_app_name, target_attr)
 
             elif isinstance(url, URLPattern):
                 # print(if_none(parent_pattern) + str(url.pattern))
                 if (filter_namespace is None or filter_namespace in parent_namespace) and (
                         filter_app_name is None or filter_app_name in parent_app_name):
                     # print(url.__dict__.keys(), url.callback.__dict__)
-                    action(url, parent_pattern, parent_namespace, parent_app_name)
+                    action(
+                        url=url,
+                        pattern=f'{parent_pattern}{url.pattern}',
+                        url_name=cls.get_url_name(url, parent_namespace.strip(':')),
+                        target_attr=target_attr,
+                    )
 
-    def crawl_urls(self, urls, parent_pattern='', parent_namespace='', parent_app_name='', filter_namespace=None, exclude_namespace=None, filter_app_name=None, exclude_app_name=None):
-        return self.crawl_urls_with_action(urls, self.crawl_urls_action, parent_pattern, parent_namespace, parent_app_name, filter_namespace, exclude_namespace, filter_app_name, exclude_app_name)
-
-    def crawl_urls_action(self, url, parent_pattern, parent_namespace, parent_app_name):
-        parent_namespace = parent_namespace.strip(':')
+    @classmethod
+    def get_url_name(cls, url, parent_namespace):
         url_name = f"{parent_namespace}:{url.name or ''}"
         url_name = url_name.strip(':')
-        pattern = f'{parent_pattern}{url.pattern}'
+        return url_name
+
+    @classmethod
+    def get_urls_from_excluded_modules(cls):
+        for module_name in cls.EXCLUDE_MODULES:
+            module_urls_name = f"{module_name}.urls"
+            try:
+                if module_urls_name not in sys.modules.keys():
+                    urls_module = importlib.import_module(module_urls_name)
+                else:
+                    urls_module = sys.modules[module_urls_name]
+
+            except ModuleNotFoundError:
+                print(f"No urls.py found for app '{module_name}'")
+            else:
+                urlpatterns = getattr(urls_module, "urlpatterns", [])
+                cls.crawl_urls_with_action(urlpatterns, cls.collect_url_name, target_attr='_exclude_urls')
+
+        print('EXCLUDED URLS')
+        pprint(cls._exclude_urls)
+        return cls._exclude_urls
+
+    @classmethod
+    def collect_url_name(cls, **kwargs):
+        url_name = kwargs['url_name']
+        target_attr = kwargs['target_attr']
+
+        getattr(cls, target_attr).append(url_name)
+
+    def crawl_urls(self, urls, parent_pattern='', parent_namespace='', parent_app_name='', filter_namespace=None, exclude_namespace=None, filter_app_name=None, exclude_app_name=None):
+        return self.crawl_urls_with_action(urls, self.crawl_test_url, parent_pattern, parent_namespace, parent_app_name, filter_namespace, exclude_namespace, filter_app_name, exclude_app_name)
+
+    def crawl_test_url(self, **kwargs):
+        url = kwargs['url']
+        url_name = kwargs['url_name']
+        pattern = kwargs['pattern']
+
         args = re.findall(r'<([:\w]+)>', pattern)
 
         if hasattr(url.callback, 'view_class'):
@@ -1348,7 +1389,7 @@ class UrlMixin(object):
             view_initkwargs = {}
         else:
             # api root
-            # print(f'{if_none(parent_pattern)}:{if_none(url.name)}', url.callback.__dict__)
+            # print(f'{if_none(pattern)}:{if_none(url.name)}', url.callback.__dict__)
             return
 
         if not url_name or self.skip_url(url_name):
@@ -1604,8 +1645,7 @@ class UrlMixin(object):
             # print('SKIP')
             return True
 
-        if url_name.endswith(tuple(cls.IGNORE_URL_NAMES_CONTAINING)) or url_name.startswith(
-                tuple(cls.IGNORE_URL_NAMES_CONTAINING)):
+        if cls.IGNORE_URL_NAMES_CONTAINING and any((substr in url_name for substr in cls.IGNORE_URL_NAMES_CONTAINING)):
             # print('SKIP')
             return True
 
@@ -1906,7 +1946,8 @@ class UrlTestMixin(UrlMixin):
 
 class DynamicUrlTestMixin(UrlMixin):
     # uses dynamic urls splitting and tests need to be generated with generate_url_tests
-    _test_urls=[]
+    _urls=[]
+    _exclude_urls=[]
 
     @classmethod
     def collect_urls_in_chunks(cls, num_tests=3, urls=None, *args, **kwargs):
@@ -1914,7 +1955,7 @@ class DynamicUrlTestMixin(UrlMixin):
             urls = get_resolver()
 
         cls.collect_urls(urls, *args, **kwargs)
-        return cls.chunkify(cls._test_urls, num_tests)
+        return cls.chunkify(cls._urls, num_tests)
 
     @staticmethod
     def chunkify(lst, num_chunks):
@@ -1934,16 +1975,22 @@ class DynamicUrlTestMixin(UrlMixin):
         return chunks
 
     @classmethod
-    def collect_urls(cls, urls, parent_pattern='', parent_namespace='', parent_app_name='', filter_namespace=None, exclude_namespace=None, filter_app_name=None, exclude_app_name=None):
-        return cls.crawl_urls_with_action(urls, cls.collect_url, parent_pattern, parent_namespace, parent_app_name, filter_namespace, exclude_namespace, filter_app_name, exclude_app_name)
+    def collect_urls(cls, urls, parent_pattern='', parent_namespace='', parent_app_name='', filter_namespace=None, exclude_namespace=None, filter_app_name=None, exclude_app_name=None, target_attr='_urls'):
+        if cls.EXCLUDE_MODULES and not cls._exclude_urls:
+            cls.get_urls_from_excluded_modules()
 
+        cls.crawl_urls_with_action(urls, cls.collect_url, parent_pattern, parent_namespace, parent_app_name, filter_namespace, exclude_namespace, filter_app_name, exclude_app_name, target_attr)
+        return getattr(cls, target_attr)
 
     @classmethod
-    def collect_url(cls, url, parent_pattern, parent_namespace, parent_app_name):
-        parent_namespace = parent_namespace.strip(':')
-        url_name = f"{parent_namespace}:{url.name or ''}"
-        url_name = url_name.strip(':')
-        pattern = f'{parent_pattern}{url.pattern}'
+    def collect_url(cls, **kwargs):
+        url = kwargs['url']
+        url_name = kwargs['url_name']
+        pattern = kwargs['pattern']
+        target_attr = kwargs['target_attr']
+
+        if not hasattr(cls, target_attr):
+            setattr(cls, target_attr, [])
 
         if hasattr(url.callback, 'view_class'):
             view_class = url.callback.view_class
@@ -1954,14 +2001,18 @@ class DynamicUrlTestMixin(UrlMixin):
             view_initkwargs = {}
         else:
             # api root
-            # print(f'{if_none(parent_pattern)}:{if_none(url.name)}', url.callback.__dict__)
+            # print(f'{if_none(pattern)}:{if_none(url.name)}', url.callback.__dict__)
             return
 
         if not url_name or cls.skip_url(url_name):
             return
 
-        cls._test_urls.append(
-            (url, parent_pattern, parent_namespace, parent_app_name)
+        if url_name in cls._exclude_urls:
+            return
+
+        target = getattr(cls, target_attr)
+        target.append(
+            {'url': url, 'url_name': url_name, 'pattern': pattern}
         )
 
 
@@ -2002,7 +2053,7 @@ def generate_url_tests(test_case, num_tests, urls, *args, **kwargs):
                 self.tested = []
 
                 for url in url_list:
-                    self.crawl_urls_action(*url)
+                    self.crawl_test_url(**url)
 
                 if self.failed:
                     # append failed count at the end of error list
