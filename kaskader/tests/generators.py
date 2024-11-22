@@ -1139,45 +1139,198 @@ class GenericBaseMixin(InputMixin, BaseMixin):
         return post_data
 
 
-class GenericTestMixin(object):
-    '''
-    Only containing generic tests
-    eveything else, setup methods etc., is in GenericBaseMixin
-    '''
-    default_url_params = {}
+class QuerysetTestMixin(object):
+    def test_querysets(self):
+        models_querysets = [model._default_manager.all() for model in self.get_models()]
+        failed = []
 
-    def test_urls(self):
-        self.models = self.get_models()
-        self.model_fields = [(f, model) for model in self.models for f in model._meta.get_fields() if f.concrete and not f.auto_created]
-        self.failed = []
-        self.tested = []
+        for qs in models_querysets:
+            qs_class = qs.__class__
 
-        urls = get_resolver()
-        self.crawl_urls(urls)
+            if not qs_class == QuerySet and not any([exclude_module in qs_class.__module__ for exclude_module in self.EXCLUDE_MODULES]):
+                qs_class_label = qs_class.__name__
+                queryset_methods = [(name, func) for name, func in qs_class.__dict__.items()
+                                    if not name.startswith('_')
+                                    and name != 'mro'
+                                    and inspect.isfunction(func)]
 
-        if self.failed:
-            # append failed count at the end of error list
-            self.failed.append('{}/{} urls FAILED: {}'.format(len(self.failed), len(self.tested), ', '.join([f['url name'] for f in self.failed])))
+                params_map = self.queryset_params_map.get(qs_class, {})
 
-        self.assertFalse(self.failed, msg=pformat(self.failed, indent=4))
+                for name, func in queryset_methods:
+                    if self.PRINT_TEST_SUBJECT:
+                        print('{}.{}'.format(qs_class_label, name))
 
-    def crawl_urls(self, urls, parent_pattern='', parent_namespace='', parent_app_name='', filter_namespace=None, exclude_namespace=None, filter_app_name=None, exclude_app_name=None):
-        for url in urls.url_patterns:
-            if isinstance(url, URLResolver):
-                if (exclude_namespace is not None and exclude_namespace == url.namespace) or (exclude_app_name is not None and exclude_app_name == url.app_name):
+                    result = None
+                    kwargs = {}
+
+                    if name in params_map:
+                        # provided arguments
+                        kwargs = params_map[name]
+
+                        try:
+                            result = getattr(qs, name)(**kwargs)
+                        except Exception as e:
+                            failed.append([{
+                                'location': 'DEFAULT KWARGS',
+                                'model': qs.model,
+                                'queryset method': '{}.{}'.format(qs_class_label, name),
+                                'kwargs': kwargs,
+                                'traceback': traceback.format_exc(),
+                            }])
+                    elif func.__code__.co_argcount == 1:
+                        # no arguments except self
+                        try:
+                            result = getattr(qs, name)()
+                        except Exception as e:
+                            failed.append([{
+                                'location': 'NO KWARGS',
+                                'model': qs.model,
+                                'queryset method': '{}.{}'.format(qs_class_label, name),
+                                'traceback': traceback.format_exc(),
+                            }])
+                    else:
+                        func = getattr(qs, name)
+
+                        try:
+                            kwargs = self.generate_func_args(func)
+                        except Exception as e:
+                            failed.append([{
+                                'location': 'GENERATING KWARGS',
+                                'model': qs.model,
+                                'queryset method': '{}.{}'.format(qs_class_label, name),
+                                'traceback': traceback.format_exc(),
+                            }])
+                        else:
+                            try:
+                                result = getattr(qs, name)(**kwargs)
+                            except Exception as e:
+                                failed.append([{
+                                    'location': 'GENERATED KWARGS',
+                                    'model': qs.model,
+                                    'queryset method': '{}.{}'.format(qs_class_label, name),
+                                    'kwargs': kwargs,
+                                    'traceback': traceback.format_exc(),
+                                }])
+
+        if failed:
+            failed.append('{} qeuryset methods FAILED'.format(len(failed)))
+
+        self.assertFalse(failed, msg=pformat(failed, indent=4))
+
+
+class FilterTestMixin(object):
+    def test_filters(self):
+        module_names = self.get_submodule_names(self.CHECK_MODULES, ['filters', 'forms'], self.EXCLUDE_MODULES)
+        filter_classes = set()
+        failed = []
+
+        # get filter classes
+        for module_name in module_names:
+            module = sys.modules[module_name]
+
+            filter_classes |= {
+                cls for cls in self.get_module_classes(module) if issubclass(cls, (FilterSet,))
+            }
+
+        filter_classes = sorted(filter_classes, key=lambda x: x.__name__)
+
+        for i, filter_class in enumerate(filter_classes):
+            if self.PRINT_TEST_SUBJECT:
+                print(filter_class)
+
+            params_maps = self.filter_params_map.get(filter_class, {'default': {}})
+
+            for map_name, params_map in params_maps.items():
+                filter_kwargs = self.generate_func_args(filter_class.__init__, params_map.get('filter_kwargs', {}))
+
+                try:
+                    filter = filter_class(**filter_kwargs)
+                except:
+                    failed.append(OrderedDict({
+                        'location': 'FILTER INIT',
+                        'filter class': filter_class,
+                        'filter_kwargs': filter_kwargs,
+                        'params map': params_map,
+                        'traceback': traceback.format_exc()
+                    }))
                     continue
 
-                if self.PRINT_TEST_SUBJECT and (filter_namespace is None or filter_namespace == url.namespace) and (filter_app_name is None or filter_app_name == url.app_name):
+                query_dict_data = QueryDict('', mutable=True)
+
+                try:
+                    query_dict_data.update(self.generate_form_data(filter.form, params_map.get('data', {})))
+                except:
+                    failed.append(OrderedDict({
+                        'location': 'FILTER DATA',
+                        'filter class': filter_class,
+                        'data': query_dict_data,
+                        'params map': params_map,
+                        'traceback': traceback.format_exc()
+                    }))
+
+                try:
+                    queryset = filter_kwargs.get('queryset', filter_class._meta.model._default_manager.all() if filter_class._meta.model else None)
+                except Exception as e:
+                    failed.append(OrderedDict({
+                        'location': 'FILTER QUERYSET',
+                        'filter class': filter_class,
+                        'params map': params_map,
+                        'traceback': traceback.format_exc()
+                    }))
+                    continue
+
+                if queryset:
+                    filter_kwargs['queryset'] = queryset
+
+                try:
+                    filter = filter_class(data=query_dict_data, **filter_kwargs)
+                    qs = filter.qs.all().values()
+                except Exception as e:
+                    failed.append(OrderedDict({
+                        'location': 'FILTER',
+                        'filter class': filter_class,
+                        'data': query_dict_data,
+                        'queryset': queryset,
+                        'params map': params_map,
+                        'traceback': traceback.format_exc()
+                    }))
+                    continue
+
+        if failed:
+            failed.append('{} filters FAILED'.format(len(failed)))
+
+        self.assertFalse(failed, msg=pformat(failed, indent=4))
+
+
+class UrlMixin(object):
+    default_url_params = {}
+
+    @classmethod
+    def crawl_urls_with_action(cls, urls, action, parent_pattern='', parent_namespace='', parent_app_name='', filter_namespace=None, exclude_namespace=None, filter_app_name=None, exclude_app_name=None):
+        for url in urls.url_patterns:
+            if isinstance(url, URLResolver):
+                if (exclude_namespace is not None and exclude_namespace == url.namespace) or (
+                        exclude_app_name is not None and exclude_app_name == url.app_name):
+                    continue
+
+                if cls.PRINT_TEST_SUBJECT and (filter_namespace is None or filter_namespace == url.namespace) and (
+                        filter_app_name is None or filter_app_name == url.app_name):
                     print('NAMESPACE', url.namespace, type(url.namespace), 'APP_NAME', url.app_name)
 
-                self.crawl_urls(url, f'{parent_pattern}{url.pattern}', f"{parent_namespace}:{url.namespace or ''}", f"{parent_app_name}:{url.app_name or ''}",
-                                filter_namespace, exclude_namespace, filter_app_name, exclude_app_name)
+                cls.crawl_urls_with_action(url, action, f'{parent_pattern}{url.pattern}',
+                                           f"{parent_namespace}:{url.namespace or ''}",
+                                           f"{parent_app_name}:{url.app_name or ''}",
+                                           filter_namespace, exclude_namespace, filter_app_name, exclude_app_name)
 
             elif isinstance(url, URLPattern):
                 # print(if_none(parent_pattern) + str(url.pattern))
-                if (filter_namespace is None or filter_namespace in parent_namespace) and (filter_app_name is None or filter_app_name in parent_app_name):
+                if (filter_namespace is None or filter_namespace in parent_namespace) and (
+                        filter_app_name is None or filter_app_name in parent_app_name):
                     # print(url.__dict__.keys(), url.callback.__dict__)
-                    self.crawl_urls_action(url, parent_pattern, parent_namespace, parent_app_name)
+                    action(url, parent_pattern, parent_namespace, parent_app_name)
+
+    def crawl_urls(self, urls, parent_pattern='', parent_namespace='', parent_app_name='', filter_namespace=None, exclude_namespace=None, filter_app_name=None, exclude_app_name=None):
+        return self.crawl_urls_with_action(urls, self.crawl_urls_action, parent_pattern, parent_namespace, parent_app_name, filter_namespace, exclude_namespace, filter_app_name, exclude_app_name)
 
     def crawl_urls_action(self, url, parent_pattern, parent_namespace, parent_app_name):
         parent_namespace = parent_namespace.strip(':')
@@ -1440,17 +1593,19 @@ class GenericTestMixin(object):
 
         return path, parsed_kwargs, fails
 
-    def skip_url(self, url_name):
-        if self.RUN_ONLY_THESE_URL_NAMES and url_name not in self.RUN_ONLY_THESE_URL_NAMES:
+    @classmethod
+    def skip_url(cls, url_name):
+        if cls.RUN_ONLY_THESE_URL_NAMES and url_name not in cls.RUN_ONLY_THESE_URL_NAMES:
             # print('SKIP')
             return True
 
-        if self.RUN_ONLY_URL_NAMES_CONTAINING and not any((substr in url_name for substr in self.RUN_ONLY_URL_NAMES_CONTAINING)):
+        if cls.RUN_ONLY_URL_NAMES_CONTAINING and not any(
+                (substr in url_name for substr in cls.RUN_ONLY_URL_NAMES_CONTAINING)):
             # print('SKIP')
             return True
 
-        if url_name.endswith(tuple(self.IGNORE_URL_NAMES_CONTAINING)) or url_name.startswith(
-                tuple(self.IGNORE_URL_NAMES_CONTAINING)):
+        if url_name.endswith(tuple(cls.IGNORE_URL_NAMES_CONTAINING)) or url_name.startswith(
+                tuple(cls.IGNORE_URL_NAMES_CONTAINING)):
             # print('SKIP')
             return True
 
@@ -1731,161 +1886,132 @@ class GenericTestMixin(object):
 
         return fails
 
-    def test_querysets(self):
-        models_querysets = [model._default_manager.all() for model in self.get_models()]
-        failed = []
 
-        for qs in models_querysets:
-            qs_class = qs.__class__
+class UrlTestMixin(UrlMixin):
+    def test_urls(self):
+        self.models = self.get_models()
+        self.model_fields = [(f, model) for model in self.models for f in model._meta.get_fields() if f.concrete and not f.auto_created]
+        self.failed = []
+        self.tested = []
 
-            if not qs_class == QuerySet and not any([exclude_module in qs_class.__module__ for exclude_module in self.EXCLUDE_MODULES]):
-                qs_class_label = qs_class.__name__
-                queryset_methods = [(name, func) for name, func in qs_class.__dict__.items()
-                                    if not name.startswith('_')
-                                    and name != 'mro'
-                                    and inspect.isfunction(func)]
+        urls = get_resolver()
+        self.crawl_urls(urls)
 
-                params_map = self.queryset_params_map.get(qs_class, {})
+        if self.failed:
+            # append failed count at the end of error list
+            self.failed.append('{}/{} urls FAILED: {}'.format(len(self.failed), len(self.tested), ', '.join([f['url name'] for f in self.failed])))
 
-                for name, func in queryset_methods:
-                    if self.PRINT_TEST_SUBJECT:
-                        print('{}.{}'.format(qs_class_label, name))
+        self.assertFalse(self.failed, msg=pformat(self.failed, indent=4))
 
-                    result = None
-                    kwargs = {}
 
-                    if name in params_map:
-                        # provided arguments
-                        kwargs = params_map[name]
+class DynamicUrlTestMixin(UrlMixin):
+    # uses dynamic urls splitting and tests need to be generated with generate_url_tests
+    _test_urls=[]
 
-                        try:
-                            result = getattr(qs, name)(**kwargs)
-                        except Exception as e:
-                            failed.append([{
-                                'location': 'DEFAULT KWARGS',
-                                'model': qs.model,
-                                'queryset method': '{}.{}'.format(qs_class_label, name),
-                                'kwargs': kwargs,
-                                'traceback': traceback.format_exc(),
-                            }])
-                    elif func.__code__.co_argcount == 1:
-                        # no arguments except self
-                        try:
-                            result = getattr(qs, name)()
-                        except Exception as e:
-                            failed.append([{
-                                'location': 'NO KWARGS',
-                                'model': qs.model,
-                                'queryset method': '{}.{}'.format(qs_class_label, name),
-                                'traceback': traceback.format_exc(),
-                            }])
-                    else:
-                        func = getattr(qs, name)
+    @classmethod
+    def collect_urls_in_chunks(cls, num_tests=3, urls=None, *args, **kwargs):
+        if urls is None:
+            urls = get_resolver()
 
-                        try:
-                            kwargs = self.generate_func_args(func)
-                        except Exception as e:
-                            failed.append([{
-                                'location': 'GENERATING KWARGS',
-                                'model': qs.model,
-                                'queryset method': '{}.{}'.format(qs_class_label, name),
-                                'traceback': traceback.format_exc(),
-                            }])
-                        else:
-                            try:
-                                result = getattr(qs, name)(**kwargs)
-                            except Exception as e:
-                                failed.append([{
-                                    'location': 'GENERATED KWARGS',
-                                    'model': qs.model,
-                                    'queryset method': '{}.{}'.format(qs_class_label, name),
-                                    'kwargs': kwargs,
-                                    'traceback': traceback.format_exc(),
-                                }])
+        cls.collect_urls(urls, *args, **kwargs)
+        return cls.chunkify(cls._test_urls, num_tests)
 
-        if failed:
-            failed.append('{} qeuryset methods FAILED'.format(len(failed)))
+    @staticmethod
+    def chunkify(lst, num_chunks):
+        """
+        Split a list into `num_chunks` parts as evenly as possible.
+        """
+        chunk_length = - (len(lst) // - float(num_chunks))  # Round up division
+        chunks = []
+        last = 0
 
-        self.assertFalse(failed, msg=pformat(failed, indent=4))
+        while last < len(lst):
+            chunks.append(lst[int(last):int(last + chunk_length)])
+            last += chunk_length
 
-    def test_filters(self):
-        module_names = self.get_submodule_names(self.CHECK_MODULES, ['filters', 'forms'], self.EXCLUDE_MODULES)
-        filter_classes = set()
-        failed = []
+        print('chunks')
+        pprint(chunks)
+        return chunks
 
-        # get filter classes
-        for module_name in module_names:
-            module = sys.modules[module_name]
+    @classmethod
+    def collect_urls(cls, urls, parent_pattern='', parent_namespace='', parent_app_name='', filter_namespace=None, exclude_namespace=None, filter_app_name=None, exclude_app_name=None):
+        return cls.crawl_urls_with_action(urls, cls.collect_url, parent_pattern, parent_namespace, parent_app_name, filter_namespace, exclude_namespace, filter_app_name, exclude_app_name)
 
-            filter_classes |= {
-                cls for cls in self.get_module_classes(module) if issubclass(cls, (FilterSet,))
-            }
 
-        filter_classes = sorted(filter_classes, key=lambda x: x.__name__)
+    @classmethod
+    def collect_url(cls, url, parent_pattern, parent_namespace, parent_app_name):
+        parent_namespace = parent_namespace.strip(':')
+        url_name = f"{parent_namespace}:{url.name or ''}"
+        url_name = url_name.strip(':')
+        pattern = f'{parent_pattern}{url.pattern}'
 
-        for i, filter_class in enumerate(filter_classes):
-            if self.PRINT_TEST_SUBJECT:
-                print(filter_class)
+        if hasattr(url.callback, 'view_class'):
+            view_class = url.callback.view_class
+            view_initkwargs = url.callback.view_initkwargs
+        elif hasattr(url.callback, 'cls'):
+            # rest api generated views
+            view_class = url.callback.cls
+            view_initkwargs = {}
+        else:
+            # api root
+            # print(f'{if_none(parent_pattern)}:{if_none(url.name)}', url.callback.__dict__)
+            return
 
-            params_maps = self.filter_params_map.get(filter_class, {'default': {}})
+        if not url_name or cls.skip_url(url_name):
+            return
 
-            for map_name, params_map in params_maps.items():
-                filter_kwargs = self.generate_func_args(filter_class.__init__, params_map.get('filter_kwargs', {}))
+        cls._test_urls.append(
+            (url, parent_pattern, parent_namespace, parent_app_name)
+        )
 
-                try:
-                    filter = filter_class(**filter_kwargs)
-                except:
-                    failed.append(OrderedDict({
-                        'location': 'FILTER INIT',
-                        'filter class': filter_class,
-                        'filter_kwargs': filter_kwargs,
-                        'params map': params_map,
-                        'traceback': traceback.format_exc()
-                    }))
-                    continue
 
-                query_dict_data = QueryDict('', mutable=True)
+class GenericTestMixin(UrlTestMixin, FilterTestMixin, QuerysetTestMixin):
+    '''
+    Only containing generic tests
+    eveything else, setup methods etc., is in GenericBaseMixin
+    '''
+    pass
 
-                try:
-                    query_dict_data.update(self.generate_form_data(filter.form, params_map.get('data', {})))
-                except:
-                    failed.append(OrderedDict({
-                        'location': 'FILTER DATA',
-                        'filter class': filter_class,
-                        'data': query_dict_data,
-                        'params map': params_map,
-                        'traceback': traceback.format_exc()
-                    }))
 
-                try:
-                    queryset = filter_kwargs.get('queryset', filter_class._meta.model._default_manager.all() if filter_class._meta.model else None)
-                except Exception as e:
-                    failed.append(OrderedDict({
-                        'location': 'FILTER QUERYSET',
-                        'filter class': filter_class,
-                        'params map': params_map,
-                        'traceback': traceback.format_exc()
-                    }))
-                    continue
+class GenericDynamicTestMixin(DynamicUrlTestMixin, FilterTestMixin, QuerysetTestMixin):
+    '''
+    Similar to GenericTestMixin except uses dynamic urls splitting and url tests need to be generated with generate_url_tests
+    '''
+    pass
 
-                if queryset:
-                    filter_kwargs['queryset'] = queryset
 
-                try:
-                    filter = filter_class(data=query_dict_data, **filter_kwargs)
-                    qs = filter.qs.all().values()
-                except Exception as e:
-                    failed.append(OrderedDict({
-                        'location': 'FILTER',
-                        'filter class': filter_class,
-                        'data': query_dict_data,
-                        'queryset': queryset,
-                        'params map': params_map,
-                        'traceback': traceback.format_exc()
-                    }))
-                    continue
+def generate_url_tests(test_case, num_tests, urls, *args, **kwargs):
+    '''
+    # generates num_tests number of tests for test_case subclass and urls
+    :param test_case: needs to be subclass of DynamicUrlTestMixin and GenericBaseMixin
+    :param num_tests: number of tests to split urls into
+    :param args: see DynamicUrlTestMixin.collect_urls
+    :param kwargs: see DynamicUrlTestMixin.collect_urls
+    :return: None
+    '''
+    if not issubclass(test_case, DynamicUrlTestMixin):
+        raise ValueError('test_case needs to be subclass of DynamicUrlTestMixin')
 
-        if failed:
-            failed.append('{} filters FAILED'.format(len(failed)))
+    for index, url_chunk in enumerate(test_case.collect_urls_in_chunks(num_tests, urls, *args, **kwargs)):
+        def make_test(url_list):
+            def test_urls(self):
+                self.models = self.get_models()
+                self.model_fields = [(f, model) for model in self.models for f in model._meta.get_fields() if
+                                     f.concrete and not f.auto_created]
+                self.failed = []
+                self.tested = []
 
-        self.assertFalse(failed, msg=pformat(failed, indent=4))
+                for url in url_list:
+                    self.crawl_urls_action(*url)
+
+                if self.failed:
+                    # append failed count at the end of error list
+                    self.failed.append('{}/{} urls FAILED: {}'.format(len(self.failed), len(self.tested), ', '.join(
+                        [f['url name'] for f in self.failed])))
+
+                self.assertFalse(self.failed, msg=pformat(self.failed, indent=4))
+
+            return test_urls
+
+        # Attach dynamically generated test method to the class
+        setattr(test_case, f"test_urls_chunk_{index + 1}", make_test(url_chunk))
