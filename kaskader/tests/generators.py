@@ -1316,9 +1316,9 @@ class UrlMixin(object):
                         exclude_app_name is not None and exclude_app_name == url.app_name):
                     continue
 
-                if cls.PRINT_TEST_SUBJECT and (filter_namespace is None or filter_namespace == url.namespace) and (
-                        filter_app_name is None or filter_app_name == url.app_name):
-                    print('NAMESPACE', url.namespace, type(url.namespace), 'APP_NAME', url.app_name)
+                # if cls.PRINT_TEST_SUBJECT and (filter_namespace is None or filter_namespace == url.namespace) and (
+                #         filter_app_name is None or filter_app_name == url.app_name):
+                #     print('NAMESPACE', url.namespace, type(url.namespace), 'APP_NAME', url.app_name)
 
                 cls.crawl_urls_with_action(url, action, f'{parent_pattern}{url.pattern}',
                                            f"{parent_namespace}:{url.namespace or ''}",
@@ -1359,8 +1359,6 @@ class UrlMixin(object):
                 urlpatterns = getattr(urls_module, "urlpatterns", [])
                 cls.crawl_urls_with_action(urlpatterns, cls.collect_url_name, target_attr='_exclude_urls')
 
-        print('EXCLUDED URLS')
-        pprint(cls._exclude_urls)
         return cls._exclude_urls
 
     @classmethod
@@ -1970,8 +1968,6 @@ class DynamicUrlTestMixin(UrlMixin):
             chunks.append(lst[int(last):int(last + chunk_length)])
             last += chunk_length
 
-        print('chunks')
-        pprint(chunks)
         return chunks
 
     @classmethod
