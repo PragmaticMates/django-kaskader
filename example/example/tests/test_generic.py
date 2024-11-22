@@ -8,7 +8,7 @@ from django.urls import reverse
 from cars.filters import CarFilter
 from cars.models import Car, BrandModel, CarBrand
 from cars.querysets import CarQuerySet
-from kaskader.tests.generators import GenericBaseMixin, GenericTestMixin
+from kaskader.tests.generators import GenericBaseMixin, GenericTestMixin, DynamicUrlTestMixin, generate_url_tests
 
 
 class ExampleBaseMixin(GenericBaseMixin):
@@ -139,3 +139,9 @@ class ExampleBaseMixin(GenericBaseMixin):
 
 class ExampleTest(GenericTestMixin, ExampleBaseMixin, TestCase):
     pass
+
+class ExmapleDyanmicUrlTest(DynamicUrlTestMixin, ExampleBaseMixin, TestCase):
+    pass
+
+# generate 3 shorter url tests instead of one long
+generate_url_tests(test_case=ExmapleDyanmicUrlTest, num_tests=3)

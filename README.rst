@@ -10,6 +10,8 @@ Requirements
 Some utilities require additional libraries as:
 
 - django-pragmatic
+- django-filter
+- better-exceptions
 
 Installation
 ------------
@@ -109,6 +111,11 @@ Generic tests
 
     ``def test_filters(self)``
         finds subclasses of FilterSet and calls filtered queryset for generated form data
+
+Dynamic url tests
+'''''''''''''''''
+``class DynamicUrlTestMixin(Object)`` and ``generate_url_tests``
+    Collect and split urls into smaller chunk and generate tests for them. they need to be used together, see example. Advantageous for parallelization.
 
 missing_tests.py
 ^^^^^^^^^^^^^^^^
