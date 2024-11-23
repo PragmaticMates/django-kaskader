@@ -683,11 +683,22 @@ class BaseMixin(object):
 
     @classmethod
     def get_models_fields(cls, model, required=None, related=None):
-        is_required = lambda f: not getattr(f, 'blank', False) if required is True else getattr(f, 'blank', False) if required is False else True
+        is_required = lambda f: True if required is None else cls.is_required_field(f) == required
         is_related = lambda f: isinstance(f, RELATED_FIELDS) if related is True else not isinstance(f, RELATED_FIELDS) if related is False else True
         is_gm2m = lambda f: isinstance(f, GM2MField) if 'gm2m' in getattr(settings, 'INSTALLED_APPS') and related is True else False
         return [f for f in model._meta.get_fields() if (is_required(f) and is_related(f) and f.concrete and not f.auto_created) or (is_required(f) and is_gm2m(f))]
 
+    @classmethod
+    def is_required_field(cls, field):
+        if getattr(field, 'null', False):
+            # null=True
+            return False
+
+        if getattr(field, 'blank', False):
+            # blank=True
+            return False
+
+        return True
 
 class CollectMixin(object):
     # collect models and urls
