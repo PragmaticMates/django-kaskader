@@ -146,7 +146,7 @@ class InputMixin(object):
             OneToOneField: lambda f: cls.get_generated_obj(f.related_model),
             BooleanField: False,
             TextField: lambda f: '{}_{}'.format(f.model._meta.label_lower, f.name),
-            CharField: lambda f: list(f.choices)[0][0] if f.choices else '{}'.format(f.name)[:f.max_length],
+            CharField: lambda f: cls.get_char_field_mock_value(f),
             SlugField: lambda f: '{}_{}'.format(f.name, cls.next_id(f.model)),
             EmailField: lambda f: '{}.{}@example.com'.format(f.model._meta.label_lower, cls.next_id(f.model)),
             gis_models.PointField: Point(0.1276, 51.5072),
@@ -526,9 +526,7 @@ class BaseMixin(object):
         path_name = r'["\']([\w-]+)["\']'
 
         for module_name, source_code in source_by_module.items():
-            regex_paths = re.findall(
-                '{}(?:path|url)\({}{}\)?, ?{}.as_view\({}\), ?name={}'.format(skip_comments, pgettext_str, url_pattern, view_class, view_params, path_name),
-                source_code)
+            regex_paths = re.findall('{}(?:path|url)\({}{}\)?, ?{}.as_view\({}\), ?name={}'.format(skip_comments, pgettext_str, url_pattern, view_class, view_params, path_name), source_code)
             imported_classes = dict(inspect.getmembers(sys.modules[module_name], inspect.isclass))
             app_name = re.findall('app_name *= *\'(\w+)\'', source_code)
 
@@ -564,33 +562,6 @@ class BaseMixin(object):
 
         return [model for model in app.get_models()]
 
-    @classmethod
-    def get_models(cls):
-        models = [model for app in cls.apps_to_check() for model in app.get_models()]
-
-        for module_name, module_params in cls.get_url_views_by_module().items():
-            for path_params in module_params:
-                model = getattr(path_params['view_class'], 'model', None)
-                if model and model not in models:
-                    models.append(model)
-
-        proxied_models = [model._meta.concrete_model for model in models if model._meta.proxy]
-        proxied_apps = {apps.get_app_config(model._meta.app_label) for model in proxied_models}
-
-        for app in proxied_apps:
-            models.extend([model for model in app.get_models() if model not in models])
-
-        # add missing models manually provided
-        if hasattr(cls, 'manual_model_dependency'):
-            for model, dependencies in cls.manual_model_dependency().items():
-                if model not in models:
-                    models.append(model)
-
-                for dependency in dependencies:
-                    if dependency not in models:
-                        models.append(dependency)
-
-        return models
 
     @classmethod
     def get_models_with_required_fields(cls):
@@ -718,7 +689,257 @@ class BaseMixin(object):
         return [f for f in model._meta.get_fields() if (is_required(f) and is_related(f) and f.concrete and not f.auto_created) or (is_required(f) and is_gm2m(f))]
 
 
-class GenericBaseMixin(InputMixin, BaseMixin):
+class CollectMixin(object):
+    # collect models and urls
+    _models = None
+    _urls = None
+    _exclude_urls = None
+    _delete_urls = None
+    _delete_urls_models = None
+
+    @classmethod
+    def get_models(cls):
+        if hasattr(cls, '_models') and cls._models is not None:
+            return cls._models
+
+        return cls.collect_models()
+
+    @classmethod
+    def collect_models(cls, target_attr='_models'):
+        if not hasattr(cls, target_attr):
+            setattr(cls, target_attr, [])
+
+        models = [model for app in cls.apps_to_check() for model in app.get_models()]
+
+        for module_name, module_params in cls.get_url_views_by_module().items():
+            for path_params in module_params:
+                model = getattr(path_params['view_class'], 'model', None)
+                if model and model not in models:
+                    models.append(model)
+
+        proxied_models = [model._meta.concrete_model for model in models if model._meta.proxy]
+        proxied_apps = {apps.get_app_config(model._meta.app_label) for model in proxied_models}
+
+        for app in proxied_apps:
+            models.extend([model for model in app.get_models() if model not in models])
+
+        # add missing models manually provided
+        if hasattr(cls, 'manual_model_dependency'):
+            for model, dependencies in cls.manual_model_dependency().items():
+                if model not in models:
+                    models.append(model)
+
+                for dependency in dependencies:
+                    if dependency not in models:
+                        models.append(dependency)
+
+        setattr(cls, target_attr, models)
+        return getattr(cls, target_attr)
+
+    @classmethod
+    def crawl_urls_with_action(cls, urls, action, parent_pattern='', parent_namespace='', parent_app_name='',
+                               filter_namespace=None, exclude_namespace=None, filter_app_name=None,
+                               exclude_app_name=None, target_attr='_urls'):
+        if isinstance(urls, URLResolver):
+            urls = urls.url_patterns
+
+        for url in urls:
+            if isinstance(url, URLResolver):
+                if (exclude_namespace is not None and exclude_namespace == url.namespace) or (
+                        exclude_app_name is not None and exclude_app_name == url.app_name):
+                    continue
+
+                # if cls.PRINT_TEST_SUBJECT and (filter_namespace is None or filter_namespace == url.namespace) and (
+                #         filter_app_name is None or filter_app_name == url.app_name):
+                #     print('NAMESPACE', url.namespace, type(url.namespace), 'APP_NAME', url.app_name)
+
+                cls.crawl_urls_with_action(url, action, f'{parent_pattern}{url.pattern}',
+                                           f"{parent_namespace}:{url.namespace or ''}",
+                                           f"{parent_app_name}:{url.app_name or ''}",
+                                           filter_namespace, exclude_namespace, filter_app_name, exclude_app_name,
+                                           target_attr)
+
+            elif isinstance(url, URLPattern):
+                # print(if_none(parent_pattern) + str(url.pattern))
+                if (filter_namespace is None or filter_namespace in parent_namespace) and (
+                        filter_app_name is None or filter_app_name in parent_app_name):
+                    # print(url.__dict__.keys(), url.callback.__dict__)
+                    action(
+                        url=url,
+                        pattern=f'{parent_pattern}{url.pattern}',
+                        url_name=cls.get_url_name(url, parent_namespace.strip(':')),
+                        target_attr=target_attr,
+                    )
+
+    @classmethod
+    def get_url_name(cls, url, parent_namespace):
+        url_name = f"{parent_namespace}:{url.name or ''}"
+        url_name = url_name.strip(':')
+        return url_name
+
+    @classmethod
+    def get_urls(cls):
+        if hasattr(cls, '_urls') and cls._urls is not None:
+            return cls._urls
+
+        return cls.collect_urls(get_resolver())
+
+    @classmethod
+    def collect_urls(cls, urls, parent_pattern='', parent_namespace='', parent_app_name='', filter_namespace=None,
+                     exclude_namespace=None, filter_app_name=None, exclude_app_name=None, target_attr='_urls'):
+        if not hasattr(cls, target_attr):
+            setattr(cls, target_attr, [])
+
+        cls.crawl_urls_with_action(urls, cls.collect_url, parent_pattern, parent_namespace, parent_app_name,
+                                   filter_namespace, exclude_namespace, filter_app_name, exclude_app_name, target_attr)
+
+        return getattr(cls, target_attr)
+
+    @classmethod
+    def collect_url(cls, **kwargs):
+        url = kwargs['url']
+        url_name = kwargs['url_name']
+        pattern = kwargs['pattern']
+        target_attr = kwargs['target_attr']
+
+        if not cls.get_view_class(url):
+            return
+
+        if not url_name or cls.skip_url(url_name):
+            return
+
+        if url_name in cls.get_exclude_urls():
+            return
+
+        target = getattr(cls, target_attr)
+        target.append({'url': url, 'url_name': url_name, 'pattern': pattern})
+
+    @classmethod
+    def skip_url(cls, url_name):
+        if cls.RUN_ONLY_THESE_URL_NAMES and url_name not in cls.RUN_ONLY_THESE_URL_NAMES:
+            # print('SKIP')
+            return True
+
+        if cls.RUN_ONLY_URL_NAMES_CONTAINING and not any(
+                (substr in url_name for substr in cls.RUN_ONLY_URL_NAMES_CONTAINING)):
+            # print('SKIP')
+            return True
+
+        if cls.IGNORE_URL_NAMES_CONTAINING and any((substr in url_name for substr in cls.IGNORE_URL_NAMES_CONTAINING)):
+            # print('SKIP')
+            return True
+
+        return False
+
+    @classmethod
+    def get_exclude_urls(cls):
+        if hasattr(cls, '_exclude_urls') and cls._exclude_urls is not None:
+            return cls._exclude_urls
+
+        return cls.collect_exclude_urls()
+
+    @classmethod
+    def collect_exclude_urls(cls, target_attr='_exclude_urls'):
+        if not hasattr(cls, target_attr):
+            setattr(cls, target_attr, [])
+
+        for module_name in cls.EXCLUDE_MODULES:
+            module_urls_name = f"{module_name}.urls"
+            try:
+                if module_urls_name not in sys.modules.keys():
+                    urls_module = importlib.import_module(module_urls_name)
+                else:
+                    urls_module = sys.modules[module_urls_name]
+
+            except ModuleNotFoundError:
+                print(f"No urls.py found for app '{module_name}'")
+            else:
+                urlpatterns = getattr(urls_module, "urlpatterns", [])
+                cls.crawl_urls_with_action(urlpatterns, cls.collect_url_name, target_attr=target_attr)
+
+        return getattr(cls, target_attr)
+
+    @classmethod
+    def collect_url_name(cls, **kwargs):
+        url_name = kwargs['url_name']
+        target_attr = kwargs['target_attr']
+
+        getattr(cls, target_attr).append(url_name)
+
+    @classmethod
+    def get_delete_urls(cls):
+        if hasattr(cls, '_delete_urls') and cls._delete_urls is not None:
+            return cls._delete_urls
+
+        return cls.collect_delete_urls()
+
+    @classmethod
+    def collect_delete_urls(cls, target_attr='_delete_urls'):
+        if not hasattr(cls, target_attr):
+            setattr(cls, target_attr, [])
+
+        target = getattr(cls, target_attr)
+
+        for path in cls.get_urls():
+            view_class = cls.get_view_class(path['url'])
+
+            if issubclass(view_class, DeleteView):
+                target.append(path)
+
+        return target
+
+    @classmethod
+    def get_delete_urls_models(cls):
+        if hasattr(cls, '_delete_urls_models'):
+            return cls._delete_urls_models
+
+        return cls.collect_delete_urls_models()
+
+    @classmethod
+    def collect_delete_urls_models(cls, target_attr='_delete_urls_models'):
+        models = set()
+
+        for path in cls.get_delete_urls():
+            view_class = cls.get_view_class(path['url'])
+            model = cls.get_view_model(path['url_name'], view_class)
+            models.add(model)
+
+        if not hasattr(cls, target_attr):
+            setattr(cls, target_attr, list(models))
+
+        return getattr(cls, target_attr)
+
+    @classmethod
+    def get_view_class(cls, url):
+        if hasattr(url.callback, 'view_class'):
+            return url.callback.view_class
+        elif hasattr(url.callback, 'cls'):
+            # rest api generated views
+            return url.callback.cls
+        else:
+            # api root
+            return None
+
+    @classmethod
+    def get_view_model(cls, url_name, view_class):
+        view_model = None
+
+        if getattr(view_class, 'model', None):
+            view_model = view_class.model
+        elif getattr(view_class, 'queryset', None):
+            view_model = view_class.queryset.model
+        else:
+
+            matching_models = [model for model in cls.get_models() if
+                               url_name.split(':')[-1].startswith(model._meta.label_lower.split(".")[-1])]
+
+            if len(matching_models) == 1:
+                view_model = matching_models[0]
+
+        return view_model
+
+
+class GenericBaseMixin(InputMixin, CollectMixin, BaseMixin):
     objs = OrderedDict()
 
     @classmethod
@@ -857,11 +1078,11 @@ class GenericBaseMixin(InputMixin, BaseMixin):
 
 
     @classmethod
-    def generate_model_field_values(cls, model, field_values={}):
-        not_related_fields = cls.get_models_fields(model, related=False)
-        related_fields = cls.get_models_fields(model, related=True)
+    def generate_model_field_values(cls, model, field_values=None, required=None):
+        not_related_fields = cls.get_models_fields(model, related=False, required=required)
+        related_fields = cls.get_models_fields(model, related=True, required=required)
         ignore_model_fields = cls.IGNORE_MODEL_FIELDS.get(model, [])
-        field_values = dict(field_values)
+        field_values = dict(field_values) if field_values else {}
         m2m_values = {}
         unique_fields = list(itertools.chain(*model._meta.unique_together))
 
@@ -886,9 +1107,6 @@ class GenericBaseMixin(InputMixin, BaseMixin):
                     raise ValueError(
                         'Don\'t know ho to generate {}.{} value {}'.format(model._meta.label, field.name, field_value))
 
-                if isinstance(field, CharField) and (field.name in unique_fields or field.unique) and not field.choices:
-                    field_value = '{}_{}'.format(field_value, cls.next_id(model))
-
                 field_values[field.name] = field.to_python(field_value) # to save default lazy values correctly, should not be problem in any case
 
         m2m_classes = (ManyToManyField, GM2MField) if 'gm2m' in getattr(settings, 'INSTALLED_APPS') else ManyToManyField
@@ -901,8 +1119,7 @@ class GenericBaseMixin(InputMixin, BaseMixin):
             elif field.name not in ignore_model_fields and field.name not in field_values and field.related_model.objects.exists():
                 field_value = field.default
 
-                if inspect.isclass(field.default) and issubclass(field.default,
-                                                                 NOT_PROVIDED) or field.default is None:
+                if inspect.isclass(field.default) and issubclass(field.default, NOT_PROVIDED) or field.default is None:
                     field_value = cls.default_field_map().get(field.__class__, None)
 
                     if callable(field_value):
@@ -911,6 +1128,12 @@ class GenericBaseMixin(InputMixin, BaseMixin):
                 else:
                     if callable(field_value):
                         field_value = field_value()
+
+                unique = field.name in unique_fields or isinstance(field, OneToOneField)
+                already_exists = field.model._default_manager.exists()
+
+                if already_exists and unique:
+                    field_value = cls.generate_obj(field.related_model)
 
                 if field_value is None:
                     raise ValueError(
@@ -925,6 +1148,10 @@ class GenericBaseMixin(InputMixin, BaseMixin):
         # required_fields = cls.get_models_fields(model, required_only=True)
         # related_fields = cls.get_models_fields(model, related_only=True)
         model_obj_values_map = cls.model_field_values_map().get(model, {cls.default_object_name(model): {}})
+
+        if model in cls.get_delete_urls_models() and not any([obj_name.endswith('_delete') for obj_name in list(model_obj_values_map.keys())]):
+            model_obj_values_map[f'{cls.default_object_name(model)}_delete'] = {}
+
         new_objs = []
 
         for obj_name, obj_values in model_obj_values_map.items():
@@ -941,14 +1168,14 @@ class GenericBaseMixin(InputMixin, BaseMixin):
                     obj = None
 
             if not obj:
-                obj = cls.generate_obj(model, obj_values)
+                obj = cls.generate_obj(model, obj_values, required=True if obj_name.endswith('_delete') else None)
                 new_objs.append(obj)
                 cls.objs[obj_name] = obj
 
         return new_objs
 
     @classmethod
-    def generate_obj(cls, model, field_values=None, **kwargs):
+    def generate_obj(cls, model, field_values=None, required=None, **kwargs):
         '''
         generates and returns object for given model and field values,
         this method is used to generate every single object
@@ -961,7 +1188,7 @@ class GenericBaseMixin(InputMixin, BaseMixin):
                 field_values = kwargs
 
         field_values = field_values(cls) if callable(field_values) else field_values
-        field_values, m2m_values = cls.generate_model_field_values(model, field_values)
+        field_values, m2m_values = cls.generate_model_field_values(model, field_values, required)
         post_save = field_values.pop('post_save', [])
 
         if model == cls.user_model():
@@ -1054,6 +1281,12 @@ class GenericBaseMixin(InputMixin, BaseMixin):
         return last.id + 1 if last else 0
 
     @classmethod
+    def get_next_char_id(cls, model, max_length=5):
+        id = f'{cls.next_id(model)}'
+        prefix = model._meta.label_lower.split('.')[1][:max_length - len(id)]
+        return prefix + id
+
+    @classmethod
     def get_pdf_file_mock(cls, name='test.pdf'):
         file_path = os.path.join(os.path.dirname(__file__), 'blank.pdf')
         file = open(file_path, 'rb')
@@ -1075,6 +1308,16 @@ class GenericBaseMixin(InputMixin, BaseMixin):
             content_type='image/png'
         )
         return file_mock
+
+    @classmethod
+    def get_char_field_mock_value(cls, field):
+        # get unique value for field.model
+        if field.choices:
+            return list(field.choices)[0][0]
+        else:
+            id = f'{cls.next_id(field.model)}'
+            prefix = field.name[:field.max_length - len(id)]
+            return prefix + id
 
     @classmethod
     def get_num_field_mock_value(cls, field):
@@ -1305,69 +1548,6 @@ class FilterTestMixin(object):
 class UrlMixin(object):
     default_url_params = {}
 
-    @classmethod
-    def crawl_urls_with_action(cls, urls, action, parent_pattern='', parent_namespace='', parent_app_name='', filter_namespace=None, exclude_namespace=None, filter_app_name=None, exclude_app_name=None, target_attr='_urls'):
-        if isinstance(urls, URLResolver):
-            urls = urls.url_patterns
-
-        for url in urls:
-            if isinstance(url, URLResolver):
-                if (exclude_namespace is not None and exclude_namespace == url.namespace) or (
-                        exclude_app_name is not None and exclude_app_name == url.app_name):
-                    continue
-
-                # if cls.PRINT_TEST_SUBJECT and (filter_namespace is None or filter_namespace == url.namespace) and (
-                #         filter_app_name is None or filter_app_name == url.app_name):
-                #     print('NAMESPACE', url.namespace, type(url.namespace), 'APP_NAME', url.app_name)
-
-                cls.crawl_urls_with_action(url, action, f'{parent_pattern}{url.pattern}',
-                                           f"{parent_namespace}:{url.namespace or ''}",
-                                           f"{parent_app_name}:{url.app_name or ''}",
-                                           filter_namespace, exclude_namespace, filter_app_name, exclude_app_name, target_attr)
-
-            elif isinstance(url, URLPattern):
-                # print(if_none(parent_pattern) + str(url.pattern))
-                if (filter_namespace is None or filter_namespace in parent_namespace) and (
-                        filter_app_name is None or filter_app_name in parent_app_name):
-                    # print(url.__dict__.keys(), url.callback.__dict__)
-                    action(
-                        url=url,
-                        pattern=f'{parent_pattern}{url.pattern}',
-                        url_name=cls.get_url_name(url, parent_namespace.strip(':')),
-                        target_attr=target_attr,
-                    )
-
-    @classmethod
-    def get_url_name(cls, url, parent_namespace):
-        url_name = f"{parent_namespace}:{url.name or ''}"
-        url_name = url_name.strip(':')
-        return url_name
-
-    @classmethod
-    def get_urls_from_excluded_modules(cls):
-        for module_name in cls.EXCLUDE_MODULES:
-            module_urls_name = f"{module_name}.urls"
-            try:
-                if module_urls_name not in sys.modules.keys():
-                    urls_module = importlib.import_module(module_urls_name)
-                else:
-                    urls_module = sys.modules[module_urls_name]
-
-            except ModuleNotFoundError:
-                print(f"No urls.py found for app '{module_name}'")
-            else:
-                urlpatterns = getattr(urls_module, "urlpatterns", [])
-                cls.crawl_urls_with_action(urlpatterns, cls.collect_url_name, target_attr='_exclude_urls')
-
-        return cls._exclude_urls
-
-    @classmethod
-    def collect_url_name(cls, **kwargs):
-        url_name = kwargs['url_name']
-        target_attr = kwargs['target_attr']
-
-        getattr(cls, target_attr).append(url_name)
-
     def crawl_urls(self, urls, parent_pattern='', parent_namespace='', parent_app_name='', filter_namespace=None, exclude_namespace=None, filter_app_name=None, exclude_app_name=None):
         return self.crawl_urls_with_action(urls, self.crawl_test_url, parent_pattern, parent_namespace, parent_app_name, filter_namespace, exclude_namespace, filter_app_name, exclude_app_name)
 
@@ -1494,17 +1674,7 @@ class UrlMixin(object):
         if args and set(parsed_kwargs.keys()) != set(arg_names):
             params_map['parsed'] = []
             # parse args from path params
-            view_model = None
-
-            if getattr(view_class, 'model', None):
-                view_model = view_class.model
-            elif getattr(view_class, 'queryset', None):
-                view_model = view_class.queryset.model
-            else:
-                matching_models = [model for model in models if path_name.split(':')[-1].startswith(model._meta.label_lower.split(".")[-1])]
-
-                if len(matching_models) == 1:
-                    view_model = matching_models[0]
+            view_model = self.get_view_model(path_name, view_class)
 
             for arg in args:
                 arg_type, arg_name = arg.split(':') if ':' in arg else ('int', arg)
@@ -1587,12 +1757,11 @@ class UrlMixin(object):
                     # its Field object
                     attr_name = attr_name.name
 
-                obj = self.get_generated_obj(model)
+                if attr_name == 'pk' and issubclass(view_class, DeleteView) and view_model in self.get_delete_urls_models():
+                    obj = self.get_generated_obj(model, self.default_object_name(model) + '_delete')
+                else:
+                    obj = self.get_generated_obj(model)
 
-                if obj is None:
-                    obj = self.generate_model_objs(model)
-
-                obj = self.get_generated_obj(model)
                 arg_value = getattr(obj, attr_name, None)
 
                 if arg_value in [True, False]:
@@ -1631,23 +1800,6 @@ class UrlMixin(object):
                 path = f'{path}?{request_kwargs}'
 
         return path, parsed_kwargs, fails
-
-    @classmethod
-    def skip_url(cls, url_name):
-        if cls.RUN_ONLY_THESE_URL_NAMES and url_name not in cls.RUN_ONLY_THESE_URL_NAMES:
-            # print('SKIP')
-            return True
-
-        if cls.RUN_ONLY_URL_NAMES_CONTAINING and not any(
-                (substr in url_name for substr in cls.RUN_ONLY_URL_NAMES_CONTAINING)):
-            # print('SKIP')
-            return True
-
-        if cls.IGNORE_URL_NAMES_CONTAINING and any((substr in url_name for substr in cls.IGNORE_URL_NAMES_CONTAINING)):
-            # print('SKIP')
-            return True
-
-        return False
 
     def get_url_test(self, path_name, path, parsed_args, url_pattern, view_class, params_map):
         fails = []
@@ -1944,16 +2096,13 @@ class UrlTestMixin(UrlMixin):
 
 class DynamicUrlTestMixin(UrlMixin):
     # uses dynamic urls splitting and tests need to be generated with generate_url_tests
-    _urls=[]
-    _exclude_urls=[]
-
     @classmethod
     def collect_urls_in_chunks(cls, num_tests=3, urls=None, *args, **kwargs):
         if urls is None:
             urls = get_resolver()
 
         cls.collect_urls(urls, *args, **kwargs)
-        return cls.chunkify(cls._urls, num_tests)
+        return cls.chunkify(cls.get_urls(), num_tests)
 
     @staticmethod
     def chunkify(lst, num_chunks):
@@ -1969,47 +2118,6 @@ class DynamicUrlTestMixin(UrlMixin):
             last += chunk_length
 
         return chunks
-
-    @classmethod
-    def collect_urls(cls, urls, parent_pattern='', parent_namespace='', parent_app_name='', filter_namespace=None, exclude_namespace=None, filter_app_name=None, exclude_app_name=None, target_attr='_urls'):
-        if cls.EXCLUDE_MODULES and not cls._exclude_urls:
-            cls.get_urls_from_excluded_modules()
-
-        cls.crawl_urls_with_action(urls, cls.collect_url, parent_pattern, parent_namespace, parent_app_name, filter_namespace, exclude_namespace, filter_app_name, exclude_app_name, target_attr)
-        return getattr(cls, target_attr)
-
-    @classmethod
-    def collect_url(cls, **kwargs):
-        url = kwargs['url']
-        url_name = kwargs['url_name']
-        pattern = kwargs['pattern']
-        target_attr = kwargs['target_attr']
-
-        if not hasattr(cls, target_attr):
-            setattr(cls, target_attr, [])
-
-        if hasattr(url.callback, 'view_class'):
-            view_class = url.callback.view_class
-            view_initkwargs = url.callback.view_initkwargs
-        elif hasattr(url.callback, 'cls'):
-            # rest api generated views
-            view_class = url.callback.cls
-            view_initkwargs = {}
-        else:
-            # api root
-            # print(f'{if_none(pattern)}:{if_none(url.name)}', url.callback.__dict__)
-            return
-
-        if not url_name or cls.skip_url(url_name):
-            return
-
-        if url_name in cls._exclude_urls:
-            return
-
-        target = getattr(cls, target_attr)
-        target.append(
-            {'url': url, 'url_name': url_name, 'pattern': pattern}
-        )
 
 
 class GenericTestMixin(UrlTestMixin, FilterTestMixin, QuerysetTestMixin):
