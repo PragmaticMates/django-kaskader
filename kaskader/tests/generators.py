@@ -694,10 +694,6 @@ class BaseMixin(object):
             # null=True
             return False
 
-        if getattr(field, 'blank', False):
-            # blank=True
-            return False
-
         return True
 
 class CollectMixin(object):
@@ -1102,7 +1098,7 @@ class GenericBaseMixin(InputMixin, CollectMixin, BaseMixin):
 
     @classmethod
     def generate_model_field_values(cls, model, field_values=None, only_required=False):
-        not_related_fields = cls.get_models_fields(model, related=False)
+        not_related_fields = cls.get_models_fields(model, related=False, required=only_required if only_required else None)
         related_fields = cls.get_models_fields(model, related=True, required=only_required if only_required else None)
         ignore_model_fields = cls.IGNORE_MODEL_FIELDS.get(model, [])
         field_values = dict(field_values) if field_values else {}
