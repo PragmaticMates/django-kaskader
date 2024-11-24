@@ -683,11 +683,18 @@ class BaseMixin(object):
 
     @classmethod
     def get_models_fields(cls, model, required=None, related=None):
-        is_required = lambda f: not getattr(f, 'blank', False) if required is True else getattr(f, 'blank', False) if required is False else True
+        is_required = lambda f: True if required is None else cls.is_required_field(f) == required
         is_related = lambda f: isinstance(f, RELATED_FIELDS) if related is True else not isinstance(f, RELATED_FIELDS) if related is False else True
         is_gm2m = lambda f: isinstance(f, GM2MField) if 'gm2m' in getattr(settings, 'INSTALLED_APPS') and related is True else False
         return [f for f in model._meta.get_fields() if (is_required(f) and is_related(f) and f.concrete and not f.auto_created) or (is_required(f) and is_gm2m(f))]
 
+    @classmethod
+    def is_required_field(cls, field):
+        if getattr(field, 'null', False):
+            # null=True
+            return False
+
+        return True
 
 class CollectMixin(object):
     # collect models and urls
@@ -698,17 +705,24 @@ class CollectMixin(object):
     _delete_urls_models = None
 
     @classmethod
+    def attr_empty(cls, attr):
+        if not hasattr(cls, attr):
+            return True
+
+        if getattr(cls, attr) is None:
+            return True
+
+        return False
+
+    @classmethod
     def get_models(cls):
-        if hasattr(cls, '_models') and cls._models is not None:
+        if not cls.attr_empty('_models'):
             return cls._models
 
         return cls.collect_models()
 
     @classmethod
     def collect_models(cls, target_attr='_models'):
-        if not hasattr(cls, target_attr):
-            setattr(cls, target_attr, [])
-
         models = [model for app in cls.apps_to_check() for model in app.get_models()]
 
         for module_name, module_params in cls.get_url_views_by_module().items():
@@ -778,16 +792,23 @@ class CollectMixin(object):
         return url_name
 
     @classmethod
-    def get_urls(cls):
-        if hasattr(cls, '_urls') and cls._urls is not None:
-            return cls._urls
+    def get_urls(cls, **kwargs):
+        target_attr = kwargs.get('target_attr', '_urls')
 
-        return cls.collect_urls(get_resolver())
+        if not cls.attr_empty(target_attr):
+            return getattr(cls, target_attr)
+
+        if 'urls' not in kwargs:
+            kwargs['urls'] = get_resolver()
+
+        # reset urls before collecting
+        setattr(cls, target_attr, [])
+        return cls.collect_urls(**kwargs)
 
     @classmethod
     def collect_urls(cls, urls, parent_pattern='', parent_namespace='', parent_app_name='', filter_namespace=None,
                      exclude_namespace=None, filter_app_name=None, exclude_app_name=None, target_attr='_urls'):
-        if not hasattr(cls, target_attr):
+        if cls.attr_empty(target_attr):
             setattr(cls, target_attr, [])
 
         cls.crawl_urls_with_action(urls, cls.collect_url, parent_pattern, parent_namespace, parent_app_name,
@@ -833,14 +854,14 @@ class CollectMixin(object):
 
     @classmethod
     def get_exclude_urls(cls):
-        if hasattr(cls, '_exclude_urls') and cls._exclude_urls is not None:
+        if not cls.attr_empty('_exclude_urls'):
             return cls._exclude_urls
 
         return cls.collect_exclude_urls()
 
     @classmethod
     def collect_exclude_urls(cls, target_attr='_exclude_urls'):
-        if not hasattr(cls, target_attr):
+        if cls.attr_empty(target_attr):
             setattr(cls, target_attr, [])
 
         for module_name in cls.EXCLUDE_MODULES:
@@ -868,14 +889,14 @@ class CollectMixin(object):
 
     @classmethod
     def get_delete_urls(cls):
-        if hasattr(cls, '_delete_urls') and cls._delete_urls is not None:
+        if not cls.attr_empty('_delete_urls'):
             return cls._delete_urls
 
         return cls.collect_delete_urls()
 
     @classmethod
     def collect_delete_urls(cls, target_attr='_delete_urls'):
-        if not hasattr(cls, target_attr):
+        if cls.attr_empty(target_attr):
             setattr(cls, target_attr, [])
 
         target = getattr(cls, target_attr)
@@ -890,7 +911,7 @@ class CollectMixin(object):
 
     @classmethod
     def get_delete_urls_models(cls):
-        if hasattr(cls, '_delete_urls_models'):
+        if not cls.attr_empty('_delete_urls_models'):
             return cls._delete_urls_models
 
         return cls.collect_delete_urls_models()
@@ -904,9 +925,7 @@ class CollectMixin(object):
             model = cls.get_view_model(path['url_name'], view_class)
             models.add(model)
 
-        if not hasattr(cls, target_attr):
-            setattr(cls, target_attr, list(models))
-
+        setattr(cls, target_attr, list(models))
         return getattr(cls, target_attr)
 
     @classmethod
@@ -1078,9 +1097,9 @@ class GenericBaseMixin(InputMixin, CollectMixin, BaseMixin):
 
 
     @classmethod
-    def generate_model_field_values(cls, model, field_values=None, required=None):
-        not_related_fields = cls.get_models_fields(model, related=False, required=required)
-        related_fields = cls.get_models_fields(model, related=True, required=required)
+    def generate_model_field_values(cls, model, field_values=None, only_required=False):
+        not_related_fields = cls.get_models_fields(model, related=False, required=only_required if only_required else None)
+        related_fields = cls.get_models_fields(model, related=True, required=only_required if only_required else None)
         ignore_model_fields = cls.IGNORE_MODEL_FIELDS.get(model, [])
         field_values = dict(field_values) if field_values else {}
         m2m_values = {}
@@ -1168,14 +1187,14 @@ class GenericBaseMixin(InputMixin, CollectMixin, BaseMixin):
                     obj = None
 
             if not obj:
-                obj = cls.generate_obj(model, obj_values, required=True if obj_name.endswith('_delete') else None)
+                obj = cls.generate_obj(model, obj_values, only_required=True if obj_name.endswith('_delete') else False)
                 new_objs.append(obj)
                 cls.objs[obj_name] = obj
 
         return new_objs
 
     @classmethod
-    def generate_obj(cls, model, field_values=None, required=None, **kwargs):
+    def generate_obj(cls, model, field_values=None, only_required=False, **kwargs):
         '''
         generates and returns object for given model and field values,
         this method is used to generate every single object
@@ -1188,7 +1207,7 @@ class GenericBaseMixin(InputMixin, CollectMixin, BaseMixin):
                 field_values = kwargs
 
         field_values = field_values(cls) if callable(field_values) else field_values
-        field_values, m2m_values = cls.generate_model_field_values(model, field_values, required)
+        field_values, m2m_values = cls.generate_model_field_values(model, field_values, only_required)
         post_save = field_values.pop('post_save', [])
 
         if model == cls.user_model():
@@ -2097,12 +2116,8 @@ class UrlTestMixin(UrlMixin):
 class DynamicUrlTestMixin(UrlMixin):
     # uses dynamic urls splitting and tests need to be generated with generate_url_tests
     @classmethod
-    def collect_urls_in_chunks(cls, num_tests=3, urls=None, *args, **kwargs):
-        if urls is None:
-            urls = get_resolver()
-
-        cls.collect_urls(urls, *args, **kwargs)
-        return cls.chunkify(cls.get_urls(), num_tests)
+    def get_urls_in_chunks(cls, num_tests=3, **kwargs):
+        return cls.chunkify(cls.get_urls(**kwargs), num_tests)
 
     @staticmethod
     def chunkify(lst, num_chunks):
@@ -2135,7 +2150,7 @@ class GenericDynamicTestMixin(DynamicUrlTestMixin, FilterTestMixin, QuerysetTest
     pass
 
 
-def generate_url_tests(test_case, num_tests, urls, *args, **kwargs):
+def generate_url_tests(test_case, num_tests, urls, **kwargs):
     '''
     # generates num_tests number of tests for test_case subclass and urls
     :param test_case: needs to be subclass of DynamicUrlTestMixin and GenericBaseMixin
@@ -2147,7 +2162,7 @@ def generate_url_tests(test_case, num_tests, urls, *args, **kwargs):
     if not issubclass(test_case, DynamicUrlTestMixin):
         raise ValueError('test_case needs to be subclass of DynamicUrlTestMixin')
 
-    for index, url_chunk in enumerate(test_case.collect_urls_in_chunks(num_tests, urls, *args, **kwargs)):
+    for index, url_chunk in enumerate(test_case.get_urls_in_chunks(num_tests=num_tests, urls=urls, **kwargs)):
         def make_test(url_list):
             def test_urls(self):
                 self.models = self.get_models()
