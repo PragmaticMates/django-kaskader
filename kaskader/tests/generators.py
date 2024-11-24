@@ -700,6 +700,7 @@ class CollectMixin(object):
     # collect models and urls
     _models = None
     _urls = None
+    _test_urls = None
     _exclude_urls = None
     _delete_urls = None
     _delete_urls_models = None
@@ -802,7 +803,7 @@ class CollectMixin(object):
             kwargs['urls'] = get_resolver()
 
         # reset urls before collecting
-        setattr(cls, target_attr, [])
+        setattr(cls, target_attr, None)
         return cls.collect_urls(**kwargs)
 
     @classmethod
@@ -826,14 +827,14 @@ class CollectMixin(object):
         if not cls.get_view_class(url):
             return
 
-        if not url_name or cls.skip_url(url_name):
-            return
+        if target_attr != '_urls':
+            if not url_name or cls.skip_url(url_name):
+                return
 
-        if url_name in cls.get_exclude_urls():
-            return
+            if url_name in cls.get_exclude_urls():
+                return
 
-        target = getattr(cls, target_attr)
-        target.append({'url': url, 'url_name': url_name, 'pattern': pattern})
+        getattr(cls, target_attr).append({'url': url, 'url_name': url_name, 'pattern': pattern})
 
     @classmethod
     def skip_url(cls, url_name):
@@ -896,18 +897,16 @@ class CollectMixin(object):
 
     @classmethod
     def collect_delete_urls(cls, target_attr='_delete_urls'):
-        if cls.attr_empty(target_attr):
-            setattr(cls, target_attr, [])
+        urls = []
 
-        target = getattr(cls, target_attr)
-
-        for path in cls.get_urls():
+        for path in cls.get_urls(target_attr='_urls'):
             view_class = cls.get_view_class(path['url'])
 
             if issubclass(view_class, DeleteView):
-                target.append(path)
+                urls.append(path)
 
-        return target
+        setattr(cls, target_attr, urls)
+        return getattr(cls, target_attr)
 
     @classmethod
     def get_delete_urls_models(cls):
@@ -1152,7 +1151,8 @@ class GenericBaseMixin(InputMixin, CollectMixin, BaseMixin):
                 already_exists = field.model._default_manager.exists()
 
                 if already_exists and unique:
-                    field_value = cls.generate_obj(field.related_model)
+                    field_value = cls.generate_obj(field.related_model, only_required=True)
+                    # cls.objs[f'{cls.default_object_name(field.related_model)}_unique_{model}.{field.name}'] = field_value
 
                 if field_value is None:
                     raise ValueError(
@@ -2114,9 +2114,12 @@ class UrlTestMixin(UrlMixin):
 
 
 class DynamicUrlTestMixin(UrlMixin):
+    _test_urls = None
     # uses dynamic urls splitting and tests need to be generated with generate_url_tests
     @classmethod
     def get_urls_in_chunks(cls, num_tests=3, **kwargs):
+        if 'target_attr' not in kwargs:
+            kwargs['target_attr'] = '_test_urls'
         return cls.chunkify(cls.get_urls(**kwargs), num_tests)
 
     @staticmethod
