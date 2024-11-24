@@ -1101,9 +1101,9 @@ class GenericBaseMixin(InputMixin, CollectMixin, BaseMixin):
 
 
     @classmethod
-    def generate_model_field_values(cls, model, field_values=None, required=None):
-        not_related_fields = cls.get_models_fields(model, related=False, required=required)
-        related_fields = cls.get_models_fields(model, related=True, required=required)
+    def generate_model_field_values(cls, model, field_values=None, only_required=False):
+        not_related_fields = cls.get_models_fields(model, related=False)
+        related_fields = cls.get_models_fields(model, related=True, required=only_required if only_required else None)
         ignore_model_fields = cls.IGNORE_MODEL_FIELDS.get(model, [])
         field_values = dict(field_values) if field_values else {}
         m2m_values = {}
@@ -1191,14 +1191,14 @@ class GenericBaseMixin(InputMixin, CollectMixin, BaseMixin):
                     obj = None
 
             if not obj:
-                obj = cls.generate_obj(model, obj_values, required=True if obj_name.endswith('_delete') else None)
+                obj = cls.generate_obj(model, obj_values, only_required=True if obj_name.endswith('_delete') else False)
                 new_objs.append(obj)
                 cls.objs[obj_name] = obj
 
         return new_objs
 
     @classmethod
-    def generate_obj(cls, model, field_values=None, required=None, **kwargs):
+    def generate_obj(cls, model, field_values=None, only_required=False, **kwargs):
         '''
         generates and returns object for given model and field values,
         this method is used to generate every single object
@@ -1211,7 +1211,7 @@ class GenericBaseMixin(InputMixin, CollectMixin, BaseMixin):
                 field_values = kwargs
 
         field_values = field_values(cls) if callable(field_values) else field_values
-        field_values, m2m_values = cls.generate_model_field_values(model, field_values, required)
+        field_values, m2m_values = cls.generate_model_field_values(model, field_values, only_required)
         post_save = field_values.pop('post_save', [])
 
         if model == cls.user_model():
