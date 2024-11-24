@@ -1151,7 +1151,8 @@ class GenericBaseMixin(InputMixin, CollectMixin, BaseMixin):
                 already_exists = field.model._default_manager.exists()
 
                 if already_exists and unique:
-                    field_value = cls.generate_obj(field.related_model)
+                    field_value = cls.generate_obj(field.related_model, only_required=True)
+                    # cls.objs[f'{cls.default_object_name(field.related_model)}_unique_{model}.{field.name}'] = field_value
 
                 if field_value is None:
                     raise ValueError(
