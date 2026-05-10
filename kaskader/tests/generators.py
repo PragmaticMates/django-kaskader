@@ -526,9 +526,9 @@ class BaseMixin(object):
         path_name = r'["\']([\w-]+)["\']'
 
         for module_name, source_code in source_by_module.items():
-            regex_paths = re.findall('{}(?:path|url)\({}{}\)?, ?{}.as_view\({}\), ?name={}'.format(skip_comments, pgettext_str, url_pattern, view_class, view_params, path_name), source_code)
+            regex_paths = re.findall(r'{}(?:path|url)\({}{}\)?, ?{}.as_view\({}\), ?name={}'.format(skip_comments, pgettext_str, url_pattern, view_class, view_params, path_name), source_code)
             imported_classes = dict(inspect.getmembers(sys.modules[module_name], inspect.isclass))
-            app_name = re.findall('app_name *= *\'(\w+)\'', source_code)
+            app_name = re.findall(r'app_name *= *\'(\w+)\'', source_code)
 
             if not app_name:
                 app_name = [module_name.replace('.urls', '').split('.')[-1]]
