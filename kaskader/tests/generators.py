@@ -481,7 +481,7 @@ class BaseMixin(object):
     def generate_func_args(cls, func, default={}):
         source = inspect.getsource(func)
         args = r'([^\)]*)'
-        args = re.findall('def {}\({}\):'.format(func.__name__, args), source)
+        args = re.findall(r'def {}\({}\):'.format(func.__name__, args), source)
         args = [args[0].replace(' *,', '')] # dont really get why would someone use this but it happened
         return cls.generate_kwargs(*cls.parse_args(args[0], eval_args=False, eval_kwargs=False), func=func, default=default)
 
