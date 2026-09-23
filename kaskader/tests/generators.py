@@ -1302,8 +1302,8 @@ class GenericBaseMixin(InputMixin, CollectMixin, BaseMixin):
     @classmethod
     def get_next_char_id(cls, model, max_length=5):
         id = f'{cls.next_id(model)}'
-        prefix = model._meta.label_lower.split('.')[1][:max_length - len(id)]
-        return prefix + id
+        prefix = model._meta.label_lower.split('.')[1][:max(0, max_length - len(id))]
+        return (prefix + id)[:max_length]
 
     @classmethod
     def get_pdf_file_mock(cls, name='test.pdf'):
@@ -1335,8 +1335,10 @@ class GenericBaseMixin(InputMixin, CollectMixin, BaseMixin):
             return list(field.choices)[0][0]
         else:
             id = f'{cls.next_id(field.model)}'
-            prefix = field.name[:field.max_length - len(id)]
-            return prefix + id
+            # a short field may not fit even the id alone, and a negative slice
+            # would quietly keep most of the name instead of dropping it
+            prefix = field.name[:max(0, field.max_length - len(id))]
+            return (prefix + id)[:field.max_length]
 
     @classmethod
     def get_num_field_mock_value(cls, field):
